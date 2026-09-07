@@ -191,7 +191,7 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
 
   // If a prerequisite disappears or speed increases, permit only a monotonic wind-down to the new limit.
   const int desired_torque_last_abs = desired_torque_last >= 0 ? desired_torque_last : -desired_torque_last;
-  const bool creep_torque_wind_down = desired_torque_last_abs > requested_max_torque;
+  const bool creep_torque_wind_down = hyundai_canfd_creep_lane_change && desired_torque_last_abs > requested_max_torque;
   const int max_torque = creep_torque_wind_down ? desired_torque_last_abs : requested_max_torque;
   const TorqueSteeringLimits HYUNDAI_CANFD_STEERING_LIMITS = {
     .max_torque = max_torque,
