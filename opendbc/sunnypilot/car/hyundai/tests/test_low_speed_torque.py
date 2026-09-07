@@ -28,20 +28,12 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
           self.assertEqual(supports_ev6_torque_profile(CP), model == CAR.KIA_EV6)
 
           for setting in (None, "1", "0", True, False):
-            enabled = setting in (True, "1") and model == CAR.KIA_EV6
             params_list = None if setting is None else [{"HkgLowSpeedTorque": setting}]
             setup_interfaces(CarInterface, CP, CP_SP, params_list)
-            self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE), enabled)
-            self.assertEqual(bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE), enabled)
-            if enabled:
-              limits = vars(CarControllerParams(CP))
-              self.assertEqual(limits["STEER_MAX"], 310)
-              self.assertEqual(limits["STEER_MAX_LOOKUP"], ([9., 13., 17.], [310, 310, 270]))
-              self.assertEqual({k: v for k, v in limits.items() if k not in ("STEER_MAX", "STEER_MAX_LOOKUP")},
-                               {k: v for k, v in stock_limits.items() if k != "STEER_MAX"})
-            else:
-              self.assertEqual(CP.to_dict(), stock)
-              self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
+            self.assertFalse(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
+            self.assertFalse(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+            self.assertEqual(CP.to_dict(), stock)
+            self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
 
   def test_reject_incompatible_configuration(self):
     self.assertFalse(supports_low_speed_torque(None))
@@ -93,7 +85,7 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
     configure_low_speed_torque(CP, True)
     self.assertEqual(CP.safetyConfigs[0].safetyModel, CarParams.SafetyModel.noOutput)
     self.assertEqual(CP.safetyConfigs[0].safetyParam, 0)
-    self.assertTrue(CP.safetyConfigs[1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+    self.assertFalse(CP.safetyConfigs[1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
 
   def test_get_car_initializes_controller_after_setting(self):
     # Exercise the production initialization path, including a new drive with the toggle off.
@@ -104,12 +96,11 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
           result = (model, fingerprint, "0" * 17, [], CarParams.FingerprintSource.can, True)
           with patch("opendbc.car.car_helpers.fingerprint", return_value=result):
             CI = get_car(None, None, None, False, False, init_params_list_sp=[{"HkgLowSpeedTorque": enabled}])
-          active = enabled and model == CAR.KIA_EV6
-          self.assertEqual(CI.CC.params.STEER_MAX, 310 if active else 270)
-          self.assertEqual(bool(CI.CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE), active)
+          self.assertEqual(CI.CC.params.STEER_MAX, 270)
+          self.assertEqual(bool(CI.CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE), False)
           parser = CANParser("hyundai_canfd_generated", [("LFA", 100)], CI.CC.CAN.ECAN)
           CC, CC_SP = CarControl(enabled=True, latActive=True), CarControlSP()
-          for speed, maximum in ((0., 310 if active else 270), (15., 290 if active else 270), (17., 270)):
+          for speed, maximum in ((0., 270), (15., 270), (17., 270)):
             CI.CS.out.vEgoRaw = speed
             for sign in (-1, 1):
               CC.actuators.torque = sign
@@ -123,7 +114,7 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
   def test_stale_flag_cannot_raise_other_canfd_controller_limits(self):
     # Defense in depth: even a caller that bypasses setup_interfaces must not
     # apply the old HKG-wide dynamic curve or access a missing lookup table.
-    for model in CANFD_CAR - {CAR.KIA_EV6}:
+    for model in CANFD_CAR:
       with self.subTest(model=model):
         CP = CarInterface.get_non_essential_params(model)
         CP_SP = CarInterface.get_params_sp(CP, model, gen_empty_fingerprint(), [], False, False, False)
