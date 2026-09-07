@@ -154,6 +154,7 @@ class HyundaiFlags(IntFlag):
 
   ALT_LIMITS_2 = 2 ** 26
 
+  # Set at initialization only when the HKG low-speed torque setting is enabled.
   CANFD_DYNAMIC_TORQUE = 2 ** 27
 
 
@@ -570,7 +571,7 @@ class CAR(Platforms):
       HyundaiCarDocs("Kia EV6 (with HDA II) 2022-24", "Highway Driving Assist II", car_parts=CarParts.common([CarHarness.hyundai_p]))
     ],
     CarSpecs(mass=2055, wheelbase=2.9, steerRatio=16, tireStiffnessFactor=0.65),
-    flags=HyundaiFlags.EV | HyundaiFlags.CANFD_DYNAMIC_TORQUE,
+    flags=HyundaiFlags.EV,
   )
   KIA_CARNIVAL_4TH_GEN = HyundaiCanFDPlatformConfig(
     [

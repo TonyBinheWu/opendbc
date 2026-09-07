@@ -327,7 +327,7 @@ class HyundaiCanfdDynamicTorqueBase:
     return super()._speed_msg(speed * 3.6 / 0.03125)
 
   def _get_max_torque(self, speed):
-    # EV6 caps the generic speed/rounding tolerance at the nominal curve.
+    # Cap the generic speed/rounding tolerance at the nominal CAN-FD curve.
     return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
 
   def test_dynamic_torque_boundaries(self):
@@ -382,10 +382,12 @@ class HyundaiCanfdDynamicTorqueBase:
       assert self._tx(self._torque_cmd_msg(torque)), (speed, torque, self.safety.get_vehicle_speed_min())
 
 
+@parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
 class TestHyundaiCanfdDynamicTorqueLFA(HyundaiCanfdDynamicTorqueBase, TestHyundaiCanfdLFASteeringBase):
   pass
 
 
+@parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
 class TestHyundaiCanfdDynamicTorqueLFAAltButtons(HyundaiCanfdDynamicTorqueBase, TestHyundaiCanfdLFASteeringAltButtonsBase):
   pass
 
@@ -402,6 +404,7 @@ class TestHyundaiCanfdDynamicTorqueLKASLong(HyundaiCanfdDynamicTorqueBase, TestH
   pass
 
 
+@parameterized_class(ALL_GAS_EV_HYBRID_COMBOS)
 class TestHyundaiCanfdDynamicTorqueLFALong(HyundaiCanfdDynamicTorqueBase, TestHyundaiCanfdLFASteeringLongBase):
   pass
 

@@ -78,20 +78,19 @@ class TestHyundaiFingerprint(unittest.TestCase):
       CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
       assert bool(CP.flags & HyundaiFlags.ALT_LIMITS) == bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.ALT_LIMITS)
 
-  def test_dynamic_torque_scope(self):
-    assert cars_with(HyundaiFlags.CANFD_DYNAMIC_TORQUE) == {CAR.KIA_EV6}
+  def test_dynamic_torque_defaults_off(self):
+    assert not cars_with(HyundaiFlags.CANFD_DYNAMIC_TORQUE)
     for car_model in CAR:
       for lka_steering in (False, True):
         fingerprint = gen_empty_fingerprint()
         if lka_steering:
           fingerprint[CanBus(None, fingerprint).CAM][0x50] = 16
         CP = CarInterface.get_params(car_model, fingerprint, [], False, False, False)
-        enabled = car_model == CAR.KIA_EV6
-        assert bool(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE) == enabled
-        assert bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE) == enabled
+        assert not CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE
+        assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE
         if CP.flags & HyundaiFlags.CANFD:
           params = CarControllerParams(CP)
-          assert params.STEER_MAX == (310 if enabled else 270)
+          assert params.STEER_MAX == 270
           assert (params.STEER_DELTA_UP, params.STEER_DELTA_DOWN) == (2, 3)
 
   def test_can_features(self):

@@ -5,12 +5,18 @@ from opendbc.car import gen_empty_fingerprint
 from opendbc.car.structs import CarControl, CarControlSP
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR
+from opendbc.sunnypilot.car.interfaces import setup_interfaces
+from opendbc.testing import parameterized_class
 
 
+@parameterized_class([{"CAR_MODEL": c} for c in (CAR.KIA_EV6, CAR.HYUNDAI_IONIQ_5, CAR.GENESIS_GV60_EV_1ST_GEN)])
 class TestHyundaiCanfdTorque(unittest.TestCase):
+  CAR_MODEL = CAR.KIA_EV6
+
   def setUp(self):
-    CP = CarInterface.get_params(CAR.KIA_EV6, gen_empty_fingerprint(), [], False, False, False)
-    CP_SP = CarInterface.get_params_sp(CP, CAR.KIA_EV6, gen_empty_fingerprint(), [], False, False, False)
+    CP = CarInterface.get_params(self.CAR_MODEL, gen_empty_fingerprint(), [], False, False, False)
+    CP_SP = CarInterface.get_params_sp(CP, self.CAR_MODEL, gen_empty_fingerprint(), [], False, False, False)
+    setup_interfaces(CarInterface, CP, CP_SP, [{"HkgLowSpeedTorque": "1"}])
     self.CI = CarInterface(CP, CP_SP)
     self.CC = CarControl(enabled=True, latActive=True)
     self.CC_SP = CarControlSP()
