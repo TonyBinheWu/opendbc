@@ -27,6 +27,5 @@ def configure_low_speed_torque(CP: CarParams, enabled: bool) -> None:
   for config in CP.safetyConfigs:
     config.safetyParam &= ~HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
 
-  if enabled and supports_ev6_torque_profile(CP):
-    CP.flags |= HyundaiFlags.CANFD_DYNAMIC_TORQUE.value
-    CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
+  # The former 310-unit profile exceeded comma's 270-unit CAN-FD envelope.
+  # Keep the parameter migration above but never enable the retired override.

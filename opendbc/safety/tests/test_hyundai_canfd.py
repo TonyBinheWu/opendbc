@@ -310,8 +310,8 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
 
 
 class HyundaiCanfdDynamicTorqueBase:
-  MAX_TORQUE_LOOKUP = [9., 13., 17.], [310, 310, 270]
-  DYNAMIC_MAX_TORQUE = True
+  MAX_TORQUE_LOOKUP = [0], [270]
+  DYNAMIC_MAX_TORQUE = False
   STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
   GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
   SAFETY_PARAM = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC
@@ -331,8 +331,9 @@ class HyundaiCanfdDynamicTorqueBase:
     return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
 
   def test_dynamic_torque_boundaries(self):
-    for speed, maximum in ((0., 310), (9., 310), (13., 310), (13.1, 309), (13.4, 306),
-                           (14., 300), (15., 290), (16., 280), (17., 270), (18., 270), (30., 270)):
+    # Even the retired 1024 flag must not permit 271, at any speed.
+    for speed in (0., 9., 13., 13.1, 13.4, 14., 15., 16., 17., 18., 30.):
+      maximum = 270
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):
@@ -353,9 +354,9 @@ class HyundaiCanfdDynamicTorqueBase:
 
   def test_dynamic_torque_with_mads(self):
     # sunnypilot can allow lateral control while ACC is disengaged. The same
-    # speed-dependent ceiling must still be enforced in that state.
+    # official ceiling must still be enforced in that state.
     self.safety.set_mads_params(True, False, False)
-    for speed, maximum in ((0., 310), (15., 290), (17., 270)):
+    for speed, maximum in ((0., 270), (15., 270), (17., 270)):
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):
