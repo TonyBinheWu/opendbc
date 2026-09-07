@@ -12,16 +12,21 @@ def supports_low_speed_torque(CP: CarParams | None) -> bool:
               CP.safetyConfigs and CP.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiCanfd)
 
 
-def configure_low_speed_torque(CP: CarParams, enabled: bool) -> None:
-  """Configure both limits before CarInterface constructs the controller; never call onroad."""
+def configure_low_speed_torque(CP: CarParams, enabled: bool, creep_lane_change_enabled: bool = False) -> None:
+  """Configure HKG torque features before CarInterface constructs the controller; never call onroad."""
   if CP.brand != "hyundai":
     return
 
-  # Clear the old EV6-only flag too, so missing/disabled settings always restore stock limits.
-  CP.flags &= ~HyundaiFlags.CANFD_DYNAMIC_TORQUE.value
+  # Clear the flags first, so missing/disabled settings always restore stock limits.
+  CP.flags &= ~(HyundaiFlags.CANFD_DYNAMIC_TORQUE | HyundaiFlags.CANFD_CREEP_LANE_CHANGE).value
   for config in CP.safetyConfigs:
-    config.safetyParam &= ~HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
+    config.safetyParam &= ~(HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE | HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE).value
 
-  if enabled and supports_low_speed_torque(CP):
+  supported = supports_low_speed_torque(CP)
+  if enabled and supported:
     CP.flags |= HyundaiFlags.CANFD_DYNAMIC_TORQUE.value
     CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
+
+  if creep_lane_change_enabled and supported:
+    CP.flags |= HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
+    CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE.value

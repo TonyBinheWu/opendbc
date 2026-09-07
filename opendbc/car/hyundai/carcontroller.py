@@ -29,6 +29,27 @@ MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 # naturally on brake press. We send ~100 ms later if it fails to do so, or if we want to cancel for another reason.
 CANCEL_BUTTON_DELAY_FRAMES = 10
 
+CREEP_LANE_CHANGE_SPEED_BP = [0., 2. * CV.KPH_TO_MS, 5. * CV.KPH_TO_MS]
+CREEP_LANE_CHANGE_STEER_MAX = 400
+
+
+def get_steer_max(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_active: bool) -> int:
+  steer_max = params.STEER_MAX
+  if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+    steer_max = round(float(np.interp(v_ego, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])))
+
+  creep_enabled = bool(flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE and creep_lane_change_active)
+  if creep_enabled and 0. <= v_ego <= CREEP_LANE_CHANGE_SPEED_BP[-1]:
+    steer_max_at_five = params.STEER_MAX
+    if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+      steer_max_at_five = round(float(np.interp(CREEP_LANE_CHANGE_SPEED_BP[-1],
+                                                params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])))
+    creep_max = round(float(np.interp(v_ego, CREEP_LANE_CHANGE_SPEED_BP,
+                                     [CREEP_LANE_CHANGE_STEER_MAX, CREEP_LANE_CHANGE_STEER_MAX, steer_max_at_five])))
+    steer_max = max(steer_max, creep_max)
+
+  return steer_max
+
 
 def process_hud_alert(enabled, fingerprint, hud_control):
   sys_warning = (hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw))
@@ -85,9 +106,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     hud_control = CC.hudControl
 
     # steering torque
-    steer_max = self.params.STEER_MAX
-    if self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-      steer_max = round(float(np.interp(CS.out.vEgoRaw, self.params.STEER_MAX_LOOKUP[0], self.params.STEER_MAX_LOOKUP[1])))
+    steer_max = get_steer_max(self.params, self.CP.flags, CS.out.vEgoRaw, CC_SP.creepLaneChangeActive)
     new_torque = int(round(actuators.torque * steer_max))
     apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max)
 

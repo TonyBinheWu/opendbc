@@ -4,6 +4,7 @@ from unittest.mock import patch
 from opendbc.can import CANParser
 from opendbc.car import gen_empty_fingerprint, get_safety_config
 from opendbc.car.car_helpers import get_car
+from opendbc.car.hyundai.carcontroller import CREEP_LANE_CHANGE_SPEED_BP, get_steer_max
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, CANFD_CAR, CarControllerParams, HyundaiFlags, HyundaiSafetyFlags
@@ -13,6 +14,38 @@ from opendbc.sunnypilot.car.interfaces import setup_interfaces
 
 
 class TestHkgLowSpeedTorque(unittest.TestCase):
+  def test_independent_creep_configuration(self):
+    for model in CAR:
+      with self.subTest(model=model):
+        CP = CarInterface.get_non_essential_params(model)
+        supported = model in CANFD_CAR
+        configure_low_speed_torque(CP, False, True)
+        self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE), False)
+        self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE), supported)
+        self.assertEqual(bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE), supported)
+
+        configure_low_speed_torque(CP, True, False)
+        self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE), supported)
+        self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE), False)
+        self.assertTrue(all(not c.safetyParam & HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE for c in CP.safetyConfigs))
+
+  def test_creep_torque_curve_and_active_gate(self):
+    CP = CarInterface.get_non_essential_params(CAR.KIA_EV6)
+    for dynamic_enabled, end_max in ((False, 270), (True, 350)):
+      with self.subTest(dynamic_enabled=dynamic_enabled):
+        configure_low_speed_torque(CP, dynamic_enabled, True)
+        params = CarControllerParams(CP)
+        midpoint_max = round((400 + end_max) / 2)
+        for speed, expected in ((0., 400), (CREEP_LANE_CHANGE_SPEED_BP[1], 400),
+                                ((CREEP_LANE_CHANGE_SPEED_BP[1] + CREEP_LANE_CHANGE_SPEED_BP[2]) / 2, midpoint_max),
+                                (CREEP_LANE_CHANGE_SPEED_BP[2], end_max)):
+          self.assertEqual(get_steer_max(params, CP.flags, speed, True), expected)
+        self.assertEqual(get_steer_max(params, CP.flags, CREEP_LANE_CHANGE_SPEED_BP[2] + 0.01, True), end_max)
+        self.assertEqual(get_steer_max(params, CP.flags, 0., False), end_max)
+
+        CP.flags &= ~HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
+        self.assertEqual(get_steer_max(params, CP.flags, 0., True), end_max)
+
   def test_scope_and_reset(self):
     for model in CAR:
       for msg in (None, 0x50, 0x110):
@@ -67,15 +100,18 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
         self.assertFalse(supports_low_speed_torque(CP))
         configure_low_speed_torque(CP, True)
         self.assertFalse(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
+        self.assertFalse(CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE)
         self.assertTrue(all(not c.safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE for c in CP.safetyConfigs))
+        self.assertTrue(all(not c.safetyParam & HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE for c in CP.safetyConfigs))
 
   def test_other_brands_unchanged(self):
     for brand in ("toyota", "tesla", "mock"):
       CP = CarInterface.get_non_essential_params(CAR.KIA_EV6)
       CP.brand = brand
       # Brand-specific bit positions can overlap. Never clear another brand's flags.
-      CP.flags |= HyundaiFlags.CANFD_DYNAMIC_TORQUE.value
-      CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
+      CP.flags |= (HyundaiFlags.CANFD_DYNAMIC_TORQUE | HyundaiFlags.CANFD_CREEP_LANE_CHANGE).value
+      CP.safetyConfigs[-1].safetyParam |= (
+        HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE | HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE).value
       stock = CP.to_dict()
       self.assertFalse(supports_low_speed_torque(CP))
       configure_low_speed_torque(CP, True)
@@ -86,10 +122,11 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
     fingerprint[4][0x130] = 16
     CP = CarInterface.get_params(CAR.KIA_EV6, fingerprint, [], False, False, False)
     self.assertEqual(len(CP.safetyConfigs), 2)
-    configure_low_speed_torque(CP, True)
+    configure_low_speed_torque(CP, True, True)
     self.assertEqual(CP.safetyConfigs[0].safetyModel, CarParams.SafetyModel.noOutput)
     self.assertEqual(CP.safetyConfigs[0].safetyParam, 0)
     self.assertTrue(CP.safetyConfigs[1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+    self.assertTrue(CP.safetyConfigs[1].safetyParam & HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE)
 
   def test_get_car_initializes_controller_after_setting(self):
     # Exercise the production initialization path, including a new drive with the toggle off.
@@ -113,3 +150,23 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               parser.update([timestamp, msgs])
               self.assertEqual(actuators.torqueOutputCan, sign * maximum)
               self.assertEqual(parser.vl["LFA"]["StrTqReqVal"], sign * maximum)
+
+  def test_get_car_creep_command_requires_active_maneuver(self):
+    fingerprint = gen_empty_fingerprint()
+    result = (CAR.KIA_EV6, fingerprint, "0" * 17, [], CarParams.FingerprintSource.can, True)
+    with patch("opendbc.car.car_helpers.fingerprint", return_value=result):
+      CI = get_car(None, None, None, False, False, init_params_list_sp=[{"HkgCreepLaneChange": True}])
+
+    self.assertTrue(CI.CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE)
+    parser = CANParser("hyundai_canfd_generated", [("LFA", 100)], CI.CC.CAN.ECAN)
+    CC = CarControl(enabled=True, latActive=True)
+    CI.CS.out.vEgoRaw = 0.
+    for active, maximum in ((False, 270), (True, 400)):
+      CC_SP = CarControlSP(creepLaneChangeActive=active)
+      CC.actuators.torque = 1.
+      CI.CC.apply_torque_last = maximum
+      timestamp = CI.CC.frame * 10_000_000
+      actuators, msgs = CI.apply(CC.as_reader(), CC_SP, timestamp)
+      parser.update([timestamp, msgs])
+      self.assertEqual(actuators.torqueOutputCan, maximum)
+      self.assertEqual(parser.vl["LFA"]["StrTqReqVal"], maximum)

@@ -309,6 +309,105 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
     pass
 
 
+class HyundaiCanfdCreepTorqueBase:
+  DYNAMIC_CREEP_TORQUE = False
+  STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
+  GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
+  SAFETY_PARAM = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC
+
+  def setUp(self):
+    super().setUp()
+    param = self.safety.get_current_safety_param() | HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE
+    if self.DYNAMIC_CREEP_TORQUE:
+      param |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
+    self.safety.init_tests()
+
+  def _speed_msg(self, speed):
+    return super()._speed_msg(speed * 3.6 / 0.03125)
+
+  def _blinker_msg(self, left=False, right=False):
+    values = {"LEFT_STALK": left, "RIGHT_STALK": right, "LEFT_LAMP": left, "RIGHT_LAMP": right}
+    return self.packer.make_can_msg_safety("BLINKERS", self.PT_BUS, values)
+
+  def _allow_creep(self, speed):
+    self._reset_speed_measurement(speed)
+    self.safety.set_timer(100)
+    self._rx(self._blinker_msg(left=True))
+
+  def test_creep_torque_boundaries(self):
+    end_max = 350 if self.DYNAMIC_CREEP_TORQUE else 270
+    midpoint_max = round((400 + end_max) / 2)
+    for speed, maximum in ((0., 400), (2. / 3.6, 400), (3.5 / 3.6, midpoint_max),
+                           (5. / 3.6, end_max), (5.01 / 3.6, end_max)):
+      self._allow_creep(speed)
+      for sign in (-1, 1):
+        for torque in (maximum, maximum + 1):
+          self.safety.set_controls_allowed(True)
+          self._set_prev_torque(sign * torque)
+          assert self._tx(self._torque_cmd_msg(sign * torque)) == (torque == maximum)
+
+  def test_creep_requires_signal_no_brake_and_fresh_sample(self):
+    base_max = 350 if self.DYNAMIC_CREEP_TORQUE else 270
+    above_base = base_max + 1
+    self._reset_speed_measurement(0.)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(above_base)
+    assert not self._tx(self._torque_cmd_msg(above_base))
+
+    self._rx(self._blinker_msg(left=True, right=True))
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(above_base)
+    assert not self._tx(self._torque_cmd_msg(above_base))
+
+    self.safety.set_timer(100)
+    self._rx(self._blinker_msg(left=True))
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(400)
+    assert self._tx(self._torque_cmd_msg(400))
+
+    self._rx(self._user_brake_msg(True))
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(above_base)
+    assert not self._tx(self._torque_cmd_msg(above_base))
+    self._rx(self._user_brake_msg(False))
+
+    self.safety.set_timer(1_200_101)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(above_base)
+    assert not self._tx(self._torque_cmd_msg(above_base))
+
+  def test_creep_flag_reset(self):
+    param = self.safety.get_current_safety_param() & ~HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
+    self.safety.init_tests()
+    self._allow_creep(0.)
+    above_base = 351 if self.DYNAMIC_CREEP_TORQUE else 271
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(above_base)
+    assert not self._tx(self._torque_cmd_msg(above_base))
+
+  def test_creep_torque_monotonic_wind_down(self):
+    self._allow_creep(0.)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(400)
+    assert self._tx(self._torque_cmd_msg(400))
+
+    self._rx(self._blinker_msg(left=True, right=True))
+    assert self._tx(self._torque_cmd_msg(397))
+    assert not self._tx(self._torque_cmd_msg(397))
+
+
+class TestHyundaiCanfdCreepTorqueLFA(HyundaiCanfdCreepTorqueBase, TestHyundaiCanfdLFASteeringBase):
+  pass
+
+
+class TestHyundaiCanfdCreepDynamicTorqueLFA(HyundaiCanfdCreepTorqueBase, TestHyundaiCanfdLFASteeringBase):
+  DYNAMIC_CREEP_TORQUE = True
+  DYNAMIC_MAX_TORQUE = True
+  MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
+
+
 class HyundaiCanfdDynamicTorqueBase:
   MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
   DYNAMIC_MAX_TORQUE = True
