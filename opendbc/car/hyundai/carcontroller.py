@@ -86,7 +86,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
 
     # steering torque
     steer_max = self.params.STEER_MAX
-    if self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+    if hasattr(self.params, 'STEER_MAX_LOOKUP'):
       steer_max = round(float(np.interp(CS.out.vEgoRaw, self.params.STEER_MAX_LOOKUP[0], self.params.STEER_MAX_LOOKUP[1])))
     new_torque = int(round(actuators.torque * steer_max))
     apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max)

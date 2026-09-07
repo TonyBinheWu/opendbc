@@ -34,7 +34,7 @@ class CarControllerParams:
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
 
-      if CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+      if CP.carFingerprint == CAR.KIA_EV6 and CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
         self.STEER_MAX = 310
         self.STEER_MAX_LOOKUP = ([9., 13., 17.], [310, 310, 270])
 

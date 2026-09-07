@@ -35,6 +35,8 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
     self.CI.CS.out.vEgo = 50.
     for speed, maximum in ((0., 310), (9., 310), (13., 310), (13.1, 309), (13.4, 306),
                            (14., 300), (15., 290), (16., 280), (16.9, 271), (17., 270), (30., 270)):
+      if self.CAR_MODEL != CAR.KIA_EV6:
+        maximum = 270
       for request in (-1., -0.5, 0.5, 1.):
         with self.subTest(speed=speed, request=request):
           self.CI.CS.out.vEgoRaw = speed
@@ -47,6 +49,8 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
 
   def test_driver_torque_limit_uses_dynamic_maximum(self):
     for speed, maximum in ((13., 310), (15., 290), (17., 270)):
+      if self.CAR_MODEL != CAR.KIA_EV6:
+        maximum = 270
       for sign in (-1, 1):
         self.CI.CS.out.vEgoRaw = speed
         self.CI.CS.out.steeringTorque = -sign * 260
@@ -67,21 +71,21 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
           assert abs(current - previous) <= 2
         else:
           assert abs(current - previous) <= 3
-      assert current == request * 310
+      assert current == request * (310 if self.CAR_MODEL == CAR.KIA_EV6 else 270)
 
     self.CC.latActive = False
     assert self.update().torqueOutputCan == 0
     assert self.parser.vl["LFA"]["ActToiSta"] == 0
 
   def test_speed_transition(self):
-    self.CI.CC.apply_torque_last = 310
+    self.CI.CC.apply_torque_last = 310 if self.CAR_MODEL == CAR.KIA_EV6 else 270
     for step in range(401):
       self.CI.CS.out.vEgoRaw = 13. + step / 100
       previous = self.CI.CC.apply_torque_last
       actuators = self.update()
       assert 0 <= previous - actuators.torqueOutputCan <= 3
       if step % 10 == 0:
-        assert actuators.torqueOutputCan == 310 - step // 10
+        assert actuators.torqueOutputCan == (310 - step // 10 if self.CAR_MODEL == CAR.KIA_EV6 else 270)
     assert actuators.torqueOutputCan == 270
 
   def test_high_angle_fault_avoidance(self):
