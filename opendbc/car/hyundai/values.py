@@ -73,6 +73,7 @@ class HyundaiSafetyFlags(IntFlag):
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
   CANFD_DYNAMIC_TORQUE = 1024
+  CANFD_ENABLE_BLINKERS = 2048
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:

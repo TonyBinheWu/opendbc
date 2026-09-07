@@ -241,6 +241,6 @@ class CarInterface(CarInterfaceBase):
       disable_ecu(can_recv, can_send, bus=CanBus(CP).ECAN, addr=0x7B1, com_cont_req=communication_control)
 
   @staticmethod
-  def deinit(CP, can_recv, can_send):
+  def deinit(CP, CP_SP, can_recv, can_send):
     communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, 0x80 | uds.CONTROL_TYPE.ENABLE_RX_ENABLE_TX, uds.MESSAGE_TYPE.NORMAL])
-    CarInterface.init(CP, can_recv, can_send, communication_control)
+    CarInterface.init(CP, CP_SP, can_recv, can_send, communication_control)

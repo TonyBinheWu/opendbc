@@ -7,11 +7,17 @@
   {0x1CF, bus, 8, .check_relay = false},  /* CRUISE_BUTTON */   \
 
 #define HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(a_can, e_can) \
+  {0x165, e_can, 24, .check_relay = false}, /* SPAS1: neutral payload only */ \
+  {0x16A, e_can, 32, .check_relay = false}, /* SPAS2: blinkers only */ \
+  {0x7B1, e_can, 8, .check_relay = false}, /* SPAS tester present only */ \
   HYUNDAI_CANFD_CRUISE_BUTTON_TX_MSGS(e_can)                        \
   {0x50,  a_can, 16, .check_relay = (a_can) == 0},  /* LKAS */      \
   {0x2A4, a_can, 24, .check_relay = (a_can) == 0},  /* CAM_0x2A4 */ \
 
 #define HYUNDAI_CANFD_LKA_STEER_MSG_ALT_COMMON_TX_MSGS(a_can, e_can) \
+  {0x165, e_can, 24, .check_relay = false}, \
+  {0x16A, e_can, 32, .check_relay = false}, \
+  {0x7B1, e_can, 8, .check_relay = false}, \
   HYUNDAI_CANFD_CRUISE_BUTTON_TX_MSGS(e_can)                        \
   {0x110, a_can, 32, .check_relay = (a_can) == 0},  /* LKAS_ALT */  \
   {0x362, a_can, 32, .check_relay = (a_can) == 0},  /* CAM_0x362 */ \
@@ -48,6 +54,7 @@
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_canfd_dynamic_torque = false;
+static bool hyundai_canfd_enable_blinkers = false;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steer_msg_alt ? 0x110U : 0x50U;
@@ -170,6 +177,29 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
 
+  // Explicit opt-in, LKA/HDA2 transport only. Never allow parking actuation,
+  // hazard commands, or arbitrary diagnostics through the SPAS interface.
+  if ((msg->addr == 0x165U) || (msg->addr == 0x16AU) || (msg->addr == 0x7B1U)) {
+    tx = hyundai_canfd_enable_blinkers && hyundai_canfd_lka_steer_msg;
+    if (msg->addr == 0x7B1U) {
+      tx = tx && (GET_BYTES(msg, 0, 4) == 0x00803E02U) && (GET_BYTES(msg, 4, 4) == 0U);
+    } else {
+      const unsigned int length = (msg->addr == 0x165U) ? 24U : 32U;
+      // Bytes 0..2 are CRC/counter; all other bits must be neutral except blinkers.
+      for (unsigned int i = 3U; i < length; i++) {
+        const uint8_t allowed_mask = ((msg->addr == 0x16AU) && (i == 16U)) ? 0xE0U : 0U;
+        if ((msg->data[i] & ~allowed_mask) != 0U) {
+          tx = false;
+        }
+      }
+      if (msg->addr == 0x16AU) {
+        const unsigned int blinker = msg->data[16] >> 5;
+        const bool active = controls_allowed || controls_allowed_lateral;
+        tx = tx && ((blinker == 0U) || (active && ((blinker == 3U) || (blinker == 4U))));
+      }
+    }
+  }
+
   // steering
   const unsigned int steer_addr = (hyundai_canfd_lka_steer_msg && !hyundai_longitudinal) ? hyundai_canfd_get_lka_addr() : 0x12aU;
   if (msg->addr == steer_addr) {
@@ -238,6 +268,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT = 128;
   const uint16_t HYUNDAI_PARAM_CANFD_ALT_BUTTONS = 32;
   const uint16_t HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE = 1024;
+  const uint16_t HYUNDAI_PARAM_CANFD_ENABLE_BLINKERS = 2048;
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
@@ -288,6 +319,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_alt_buttons = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ALT_BUTTONS);
   hyundai_canfd_lka_steer_msg_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT);
   hyundai_canfd_dynamic_torque = GET_FLAG(param, HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE);
+  hyundai_canfd_enable_blinkers = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ENABLE_BLINKERS) && hyundai_canfd_lka_steer_msg;
 
   safety_config ret;
   if (hyundai_longitudinal) {
