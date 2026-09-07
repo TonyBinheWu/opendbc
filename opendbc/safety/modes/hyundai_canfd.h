@@ -144,7 +144,7 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
 static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   const struct lookup_t HYUNDAI_CANFD_MAX_TORQUE_LOOKUP = {
     {9., 13., 17.},
-    {310., 310., 270.},
+    {350., 350., 270.},
   };
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
   const int max_torque = hyundai_canfd_dynamic_torque ?

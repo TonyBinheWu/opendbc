@@ -310,7 +310,7 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
 
 
 class HyundaiCanfdDynamicTorqueBase:
-  MAX_TORQUE_LOOKUP = [9., 13., 17.], [310, 310, 270]
+  MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
   DYNAMIC_MAX_TORQUE = True
   STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
   GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
@@ -331,8 +331,8 @@ class HyundaiCanfdDynamicTorqueBase:
     return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
 
   def test_dynamic_torque_boundaries(self):
-    for speed, maximum in ((0., 310), (9., 310), (13., 310), (13.1, 309), (13.4, 306),
-                           (14., 300), (15., 290), (16., 280), (17., 270), (18., 270), (30., 270)):
+    for speed, maximum in ((0., 350), (9., 350), (13., 350), (13.1, 348), (13.4, 342),
+                           (14., 330), (15., 310), (16., 290), (17., 270), (18., 270), (30., 270)):
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):
@@ -346,7 +346,7 @@ class HyundaiCanfdDynamicTorqueBase:
     self.safety.init_tests()
     for speed in (0., 13., 17.):
       self._reset_speed_measurement(speed)
-      for torque in (-310, -271, -270, 270, 271, 310):
+      for torque in (-350, -271, -270, 270, 271, 350):
         self.safety.set_controls_allowed(True)
         self._set_prev_torque(torque)
         assert self._tx(self._torque_cmd_msg(torque)) == (abs(torque) <= 270)
@@ -355,7 +355,7 @@ class HyundaiCanfdDynamicTorqueBase:
     # sunnypilot can allow lateral control while ACC is disengaged. The same
     # speed-dependent ceiling must still be enforced in that state.
     self.safety.set_mads_params(True, False, False)
-    for speed, maximum in ((0., 310), (15., 290), (17., 270)):
+    for speed, maximum in ((0., 350), (15., 310), (17., 270)):
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):

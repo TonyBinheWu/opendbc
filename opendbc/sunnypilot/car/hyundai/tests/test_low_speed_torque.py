@@ -34,8 +34,8 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
             self.assertEqual(bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE), enabled)
             if enabled:
               limits = vars(CarControllerParams(CP))
-              self.assertEqual(limits["STEER_MAX"], 310)
-              self.assertEqual(limits["STEER_MAX_LOOKUP"], ([9., 13., 17.], [310, 310, 270]))
+              self.assertEqual(limits["STEER_MAX"], 350)
+              self.assertEqual(limits["STEER_MAX_LOOKUP"], ([9., 13., 17.], [350, 350, 270]))
               self.assertEqual({k: v for k, v in limits.items() if k not in ("STEER_MAX", "STEER_MAX_LOOKUP")},
                                {k: v for k, v in stock_limits.items() if k != "STEER_MAX"})
             else:
@@ -100,10 +100,10 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
           result = (model, fingerprint, "0" * 17, [], CarParams.FingerprintSource.can, True)
           with patch("opendbc.car.car_helpers.fingerprint", return_value=result):
             CI = get_car(None, None, None, False, False, init_params_list_sp=[{"HkgLowSpeedTorque": enabled}])
-          self.assertEqual(CI.CC.params.STEER_MAX, 310 if enabled else 270)
+          self.assertEqual(CI.CC.params.STEER_MAX, 350 if enabled else 270)
           parser = CANParser("hyundai_canfd_generated", [("LFA", 100)], CI.CC.CAN.ECAN)
           CC, CC_SP = CarControl(enabled=True, latActive=True), CarControlSP()
-          for speed, maximum in ((0., 310 if enabled else 270), (15., 290 if enabled else 270), (17., 270)):
+          for speed, maximum in ((0., 350 if enabled else 270), (15., 310 if enabled else 270), (17., 270)):
             CI.CS.out.vEgoRaw = speed
             for sign in (-1, 1):
               CC.actuators.torque = sign

@@ -35,8 +35,8 @@ class CarControllerParams:
       self.STEER_DELTA_DOWN = 3
 
       if CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-        self.STEER_MAX = 310
-        self.STEER_MAX_LOOKUP = ([9., 13., 17.], [310, 310, 270])
+        self.STEER_MAX = 350
+        self.STEER_MAX_LOOKUP = ([9., 13., 17.], [350, 350, 270])
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
