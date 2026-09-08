@@ -35,8 +35,12 @@ class CarControllerParams:
       self.STEER_DELTA_DOWN = 3
 
       if CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-        self.STEER_MAX = 350
-        self.STEER_MAX_LOOKUP = ([9., 13., 17.], [350, 350, 270])
+        # Preserve the 2022 EV6 low-speed torque and rate limits, then blend them
+        # into the current HKG profile so neither limit changes abruptly at 11 m/s.
+        self.STEER_MAX = 384
+        self.STEER_MAX_LOOKUP = ([11., 13., 17.], [384, 350, 270])
+        self.STEER_DELTA_UP_LOOKUP = ([11., 13.], [10, 2])
+        self.STEER_DELTA_DOWN_LOOKUP = ([11., 13.], [10, 3])
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -73,7 +77,7 @@ class HyundaiSafetyFlags(IntFlag):
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
   CANFD_DYNAMIC_TORQUE = 1024
-  CANFD_CREEP_LANE_CHANGE = 2048
+  CANFD_CREEP_LANE_CHANGE = 2048  # reserved; legacy setting bit is no longer emitted
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:
@@ -158,7 +162,7 @@ class HyundaiFlags(IntFlag):
   # Set at initialization only when the HKG low-speed torque setting is enabled.
   CANFD_DYNAMIC_TORQUE = 2 ** 27
 
-  # Set at initialization only when HKG creep lane change is enabled.
+  # Enables the low-speed automatic lane-change behavior together with HKG low-speed torque.
   CANFD_CREEP_LANE_CHANGE = 2 ** 28
 
 

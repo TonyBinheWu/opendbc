@@ -45,19 +45,10 @@
 #define HYUNDAI_CANFD_SCC_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x1a0, (scc_bus), 32, 50U, .max_counter = 0xffU, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
-// BLINKERS has no checksum/counter fields. Kept last in every RX array so it
-// can be excluded completely when the creep feature is disabled.
-// Its 4 Hz rate is below the generic 10 Hz minimum; the 2.5 s lag check still applies.
-#define HYUNDAI_CANFD_CREEP_RX_CHECK(pt_bus) \
-  {.msg = {{0x413, (pt_bus), 8, 4U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true, .ignore_frequency_check = true}, { 0 }, { 0 }}},
-
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_canfd_dynamic_torque = false;
-static bool hyundai_canfd_creep_lane_change = false;
-static bool hyundai_canfd_creep_blinker_seen = false;
-static uint32_t hyundai_canfd_creep_blinker_ts = 0U;
-static bool hyundai_canfd_creep_rt_active = false;
+static bool hyundai_canfd_low_speed_rt_active = false;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steer_msg_alt ? 0x110U : 0x50U;
@@ -84,24 +75,6 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
   const unsigned int scc_bus = hyundai_camera_scc ? 2U : pt_bus;
 
   if (msg->bus == pt_bus) {
-    // A physical, single-sided turn signal is an independent prerequisite for the creep torque allowance.
-    // Lamps flash, so remember a recent valid sample; hazards never refresh the allowance.
-    if ((msg->addr == 0x413U) && hyundai_canfd_creep_lane_change) {
-      const bool use_alt_lamp = GET_BIT(msg, 62U);
-      const bool left_lamp = use_alt_lamp ? GET_BIT(msg, 59U) : GET_BIT(msg, 20U);
-      const bool right_lamp = use_alt_lamp ? GET_BIT(msg, 61U) : GET_BIT(msg, 22U);
-      const bool left_blinker = GET_BIT(msg, 8U) || left_lamp;
-      const bool right_blinker = GET_BIT(msg, 10U) || right_lamp;
-      if (left_blinker != right_blinker) {
-        hyundai_canfd_creep_blinker_seen = true;
-        hyundai_canfd_creep_blinker_ts = microsecond_timer_get();
-      } else if (left_blinker) {
-        hyundai_canfd_creep_blinker_seen = false;
-      } else {
-        // Keep the recent sample through the lamps' normal off phase.
-      }
-    }
-
     // driver torque
     if (msg->addr == 0xeaU) {
       int torque_driver_new = ((msg->data[11] & 0x1fU) << 8U) | msg->data[10];
@@ -171,56 +144,44 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
 
 static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   const struct lookup_t HYUNDAI_CANFD_MAX_TORQUE_LOOKUP = {
-    {9., 13., 17.},
-    {350., 350., 270.},
+    {11., 13., 17.},
+    {384., 350., 270.},
   };
-  const struct lookup_t HYUNDAI_CANFD_CREEP_TORQUE_LOOKUP = {
-    {0., 21. * KPH_TO_MS, 30. * KPH_TO_MS},
-    {400., 400., 270.},
+  const struct lookup_t HYUNDAI_CANFD_RATE_UP_LOOKUP = {
+    {11., 13., 13.},
+    {10., 2., 2.},
   };
-  const struct lookup_t HYUNDAI_CANFD_CREEP_DYNAMIC_TORQUE_LOOKUP = {
-    {0., 21. * KPH_TO_MS, 30. * KPH_TO_MS},
-    {400., 400., 350.},
+  const struct lookup_t HYUNDAI_CANFD_RATE_DOWN_LOOKUP = {
+    {11., 13., 13.},
+    {10., 3., 3.},
   };
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
-  const int base_max_torque = hyundai_canfd_dynamic_torque ?
+  const int requested_max_torque = hyundai_canfd_dynamic_torque ?
     ROUND(safety_interpolate(HYUNDAI_CANFD_MAX_TORQUE_LOOKUP, vehicle_speed.min / VEHICLE_SPEED_FACTOR)) : 270;
-  const float creep_speed = vehicle_speed.max / VEHICLE_SPEED_FACTOR;
-  const bool creep_blinker_recent = hyundai_canfd_creep_blinker_seen &&
-    (safety_get_ts_elapsed(microsecond_timer_get(), hyundai_canfd_creep_blinker_ts) <= 1200000U);
-  const bool creep_torque_allowed = hyundai_canfd_creep_lane_change && creep_blinker_recent && !brake_pressed &&
-    (creep_speed <= (30. * KPH_TO_MS));
-  int requested_max_torque = base_max_torque;
-  if (creep_torque_allowed) {
-    const float creep_max_torque = hyundai_canfd_dynamic_torque ?
-      safety_interpolate(HYUNDAI_CANFD_CREEP_DYNAMIC_TORQUE_LOOKUP, creep_speed) :
-      safety_interpolate(HYUNDAI_CANFD_CREEP_TORQUE_LOOKUP, creep_speed);
-    requested_max_torque = SAFETY_MAX(base_max_torque, ROUND(creep_max_torque));
-  }
 
-  // If a prerequisite disappears or speed increases, permit only a monotonic wind-down to the new limit.
+  // If speed increases while torque is above the new curve, permit only a monotonic wind-down.
   const int desired_torque_last_abs = (desired_torque_last >= 0) ? desired_torque_last : -desired_torque_last;
-  const bool creep_torque_wind_down = hyundai_canfd_creep_lane_change && (desired_torque_last_abs > requested_max_torque);
-  const bool creep_rate_enabled = creep_torque_allowed && (creep_speed <= (21. * KPH_TO_MS));
-  const int max_rate_up = creep_rate_enabled ? 10 : 2;
-  const int max_rate_down = creep_rate_enabled ? 8 : 3;
+  const bool torque_wind_down = hyundai_canfd_dynamic_torque && (desired_torque_last_abs > requested_max_torque);
+  const float rate_speed = vehicle_speed.min / VEHICLE_SPEED_FACTOR;
+  const int max_rate_up = hyundai_canfd_dynamic_torque ? ROUND(safety_interpolate(HYUNDAI_CANFD_RATE_UP_LOOKUP, rate_speed)) : 2;
+  const int max_rate_down = hyundai_canfd_dynamic_torque ? ROUND(safety_interpolate(HYUNDAI_CANFD_RATE_DOWN_LOOKUP, rate_speed)) : 3;
   const int rt_torque_delta = desired_torque_last - rt_torque_last;
   const int rt_torque_delta_abs = (rt_torque_delta >= 0) ? rt_torque_delta : -rt_torque_delta;
-  if (creep_rate_enabled) {
-    hyundai_canfd_creep_rt_active = true;
-  } else if (hyundai_canfd_creep_rt_active && ((rt_torque_delta_abs + max_rate_up) <= 112)) {
-    hyundai_canfd_creep_rt_active = false;
+  if (max_rate_up > 2) {
+    hyundai_canfd_low_speed_rt_active = true;
+  } else if (hyundai_canfd_low_speed_rt_active && ((rt_torque_delta_abs + max_rate_up) <= 112)) {
+    hyundai_canfd_low_speed_rt_active = false;
   } else {
     // Retain the wider RT window until the stored reference catches up.
   }
-  const int max_torque = creep_torque_wind_down ? desired_torque_last_abs : requested_max_torque;
+  const int max_torque = torque_wind_down ? desired_torque_last_abs : requested_max_torque;
   const TorqueSteeringLimits HYUNDAI_CANFD_STEERING_LIMITS = {
     .max_torque = max_torque,
-    .dynamic_max_torque = hyundai_canfd_dynamic_torque && !creep_torque_allowed && !creep_torque_wind_down,
+    .dynamic_max_torque = hyundai_canfd_dynamic_torque && !torque_wind_down,
     .max_torque_lookup = HYUNDAI_CANFD_MAX_TORQUE_LOOKUP,
     // 10 units/frame needs 270 units/250 ms because the RT reference updates after checking the 27th 100 Hz frame.
-    // Keep it until the RT reference catches up, so crossing 21 km/h cannot reject an otherwise valid command.
-    .max_rt_delta = hyundai_canfd_creep_rt_active ? 270 : 112,
+    // Keep it until the RT reference catches up, so crossing 13 m/s cannot reject an otherwise valid command.
+    .max_rt_delta = hyundai_canfd_low_speed_rt_active ? 270 : 112,
     .max_rate_up = max_rate_up,
     .max_rate_down = max_rate_down,
     .driver_torque_allowance = 250,
@@ -245,7 +206,7 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     const int desired_torque_abs = (desired_torque >= 0) ? desired_torque : -desired_torque;
 
     // Normal steer-request cuts may hold torque briefly; every requested frame above the new limit must decrease.
-    if (creep_torque_wind_down && (desired_torque_abs > requested_max_torque) &&
+    if (torque_wind_down && (desired_torque_abs > requested_max_torque) &&
         ((desired_torque_abs > desired_torque_last_abs) ||
          ((desired_torque_abs == desired_torque_last_abs) && steer_req))) {
       tx = false;
@@ -313,7 +274,6 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT = 128;
   const uint16_t HYUNDAI_PARAM_CANFD_ALT_BUTTONS = 32;
   const uint16_t HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE = 1024;
-  const uint16_t HYUNDAI_PARAM_CANFD_CREEP_LANE_CHANGE = 2048;
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
@@ -364,17 +324,13 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_alt_buttons = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ALT_BUTTONS);
   hyundai_canfd_lka_steer_msg_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT);
   hyundai_canfd_dynamic_torque = GET_FLAG(param, HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE);
-  hyundai_canfd_creep_lane_change = GET_FLAG(param, HYUNDAI_PARAM_CANFD_CREEP_LANE_CHANGE);
-  hyundai_canfd_creep_blinker_seen = false;
-  hyundai_canfd_creep_blinker_ts = 0U;
-  hyundai_canfd_creep_rt_active = false;
+  hyundai_canfd_low_speed_rt_active = false;
 
   safety_config ret;
   if (hyundai_longitudinal) {
     if (hyundai_canfd_lka_steer_msg) {
       static RxCheck hyundai_canfd_lka_steer_msg_long_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(1)
       };
 
       ret = BUILD_SAFETY_CFG(hyundai_canfd_lka_steer_msg_long_rx_checks, HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS);
@@ -383,12 +339,10 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       // Longitudinal checks for LFA steering
       static RxCheck hyundai_canfd_long_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_long_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
@@ -416,7 +370,6 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_lka_steer_msg_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(1)
       };
 
       SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_rx_checks, ret);
@@ -431,13 +384,11 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_radar_scc_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_radar_scc_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       SET_TX_MSGS(HYUNDAI_CANFD_LFA_STEERING_TX_MSGS, ret);
@@ -455,13 +406,11 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
-        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
@@ -476,10 +425,6 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         SET_RX_CHECKS(hyundai_canfd_rx_checks, ret);
       }
     }
-  }
-
-  if (!hyundai_canfd_creep_lane_change) {
-    ret.rx_checks_len -= 1;
   }
 
   return ret;

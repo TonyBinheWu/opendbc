@@ -29,40 +29,23 @@ MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 # naturally on brake press. We send ~100 ms later if it fails to do so, or if we want to cancel for another reason.
 CANCEL_BUTTON_DELAY_FRAMES = 10
 
-CREEP_LANE_CHANGE_SPEED_BP = [0., 21. * CV.KPH_TO_MS, 30. * CV.KPH_TO_MS]
-CREEP_LANE_CHANGE_STEER_MAX = 400
-CREEP_LANE_CHANGE_DELTA_UP = 10
-CREEP_LANE_CHANGE_DELTA_DOWN = 8
-
-
-def get_steer_max(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_active: bool) -> int:
+def get_steer_max(params, flags: HyundaiFlags, v_ego: float) -> int:
   steer_max = params.STEER_MAX
   if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-    steer_max = round(float(np.interp(v_ego, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])))
-
-  creep_enabled = bool(flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE and creep_lane_change_active)
-  if creep_enabled and 0. <= v_ego <= CREEP_LANE_CHANGE_SPEED_BP[-1]:
-    steer_max_at_end = params.STEER_MAX
-    if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-      steer_max_at_end = round(float(np.interp(CREEP_LANE_CHANGE_SPEED_BP[-1],
-                                                params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])))
-    # Panda stores wheel speed at 0.001 m/s resolution. Use the upper bin so
-    # Float32/rounding differences cannot request one unit above its taper.
-    creep_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
-    creep_max = round(float(np.interp(creep_speed, CREEP_LANE_CHANGE_SPEED_BP,
-                                     [CREEP_LANE_CHANGE_STEER_MAX, CREEP_LANE_CHANGE_STEER_MAX, steer_max_at_end])))
-    steer_max = max(steer_max, creep_max)
-
+    # Panda stores vehicle speed at 0.001 m/s resolution. Select the upper bin
+    # on decreasing curves so Float32/rounding differences stay conservative.
+    curve_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
+    # Limits are positive; +0.5 matches Panda's ROUND instead of Python's ties-to-even round.
+    steer_max = int(float(np.interp(curve_speed, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])) + 0.5)
   return steer_max
 
 
-def get_steer_rate_limits(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_active: bool) -> tuple[int, int]:
-  creep_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
-  rate_max_speed = float(np.ceil(CREEP_LANE_CHANGE_SPEED_BP[1] * 1000.0)) / 1000.0
-  creep_rate_enabled = bool(flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE and creep_lane_change_active and
-                            0. <= v_ego and creep_speed <= rate_max_speed)
-  if creep_rate_enabled:
-    return CREEP_LANE_CHANGE_DELTA_UP, CREEP_LANE_CHANGE_DELTA_DOWN
+def get_steer_rate_limits(params, flags: HyundaiFlags, v_ego: float) -> tuple[int, int]:
+  if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+    curve_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
+    delta_up = int(float(np.interp(curve_speed, params.STEER_DELTA_UP_LOOKUP[0], params.STEER_DELTA_UP_LOOKUP[1])) + 0.5)
+    delta_down = int(float(np.interp(curve_speed, params.STEER_DELTA_DOWN_LOOKUP[0], params.STEER_DELTA_DOWN_LOOKUP[1])) + 0.5)
+    return delta_up, delta_down
   return params.STEER_DELTA_UP, params.STEER_DELTA_DOWN
 
 
@@ -121,8 +104,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     hud_control = CC.hudControl
 
     # steering torque
-    steer_max = get_steer_max(self.params, self.CP.flags, CS.out.vEgoRaw, CC_SP.creepLaneChangeActive)
-    steer_delta_up, steer_delta_down = get_steer_rate_limits(self.params, self.CP.flags, CS.out.vEgoRaw, CC_SP.creepLaneChangeActive)
+    steer_max = get_steer_max(self.params, self.CP.flags, CS.out.vEgoRaw)
+    steer_delta_up, steer_delta_down = get_steer_rate_limits(self.params, self.CP.flags, CS.out.vEgoRaw)
     new_torque = int(round(actuators.torque * steer_max))
     apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max,
                                                     steer_delta_up=steer_delta_up, steer_delta_down=steer_delta_down)

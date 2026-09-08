@@ -309,110 +309,8 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
     pass
 
 
-class HyundaiCanfdCreepTorqueBase:
-  DYNAMIC_CREEP_TORQUE = False
-  STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
-  GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
-  SAFETY_PARAM = HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC
-
-  def setUp(self):
-    super().setUp()
-    param = self.safety.get_current_safety_param() | HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE
-    if self.DYNAMIC_CREEP_TORQUE:
-      param |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE
-    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
-    self.safety.init_tests()
-
-  def _speed_msg(self, speed):
-    return super()._speed_msg(speed * 3.6 / 0.03125)
-
-  def _blinker_msg(self, left=False, right=False):
-    values = {"LEFT_STALK": left, "RIGHT_STALK": right, "LEFT_LAMP": left, "RIGHT_LAMP": right}
-    return self.packer.make_can_msg_safety("BLINKERS", self.PT_BUS, values)
-
-  def _allow_creep(self, speed):
-    self._reset_speed_measurement(speed)
-    self.safety.set_timer(100)
-    self._rx(self._blinker_msg(left=True))
-
-  def test_creep_torque_boundaries(self):
-    end_max = 350 if self.DYNAMIC_CREEP_TORQUE else 270
-    midpoint_max = round((400 + end_max) / 2)
-    for speed, maximum in ((0., 400), (20. / 3.6, 400), (21. / 3.6, 400), (25.5 / 3.6, midpoint_max),
-                           (30. / 3.6, end_max), (30.01 / 3.6, end_max)):
-      self._allow_creep(speed)
-      for sign in (-1, 1):
-        for torque in (maximum, maximum + 1):
-          self.safety.set_controls_allowed(True)
-          self._set_prev_torque(sign * torque)
-          assert self._tx(self._torque_cmd_msg(sign * torque)) == (torque == maximum)
-
-  def test_creep_requires_signal_no_brake_and_fresh_sample(self):
-    base_max = 350 if self.DYNAMIC_CREEP_TORQUE else 270
-    above_base = base_max + 1
-    self._reset_speed_measurement(0.)
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(above_base)
-    assert not self._tx(self._torque_cmd_msg(above_base))
-
-    self._rx(self._blinker_msg(left=True, right=True))
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(above_base)
-    assert not self._tx(self._torque_cmd_msg(above_base))
-
-    self.safety.set_timer(100)
-    self._rx(self._blinker_msg(left=True))
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(400)
-    assert self._tx(self._torque_cmd_msg(400))
-
-    self._rx(self._user_brake_msg(True))
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(above_base)
-    assert not self._tx(self._torque_cmd_msg(above_base))
-    self._rx(self._user_brake_msg(False))
-
-    self.safety.set_timer(1_200_101)
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(above_base)
-    assert not self._tx(self._torque_cmd_msg(above_base))
-
-  def test_creep_flag_reset(self):
-    param = self.safety.get_current_safety_param() & ~HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE
-    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
-    self.safety.init_tests()
-    self._allow_creep(0.)
-    above_base = 351 if self.DYNAMIC_CREEP_TORQUE else 271
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(above_base)
-    assert not self._tx(self._torque_cmd_msg(above_base))
-
-  def test_creep_torque_monotonic_wind_down(self):
-    self._allow_creep(0.)
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(400)
-    assert self._tx(self._torque_cmd_msg(400))
-
-    self._rx(self._blinker_msg(left=True, right=True))
-    assert self._tx(self._torque_cmd_msg(397))
-    assert not self._tx(self._torque_cmd_msg(397))
-
-
-class TestHyundaiCanfdCreepTorqueLFA(HyundaiCanfdCreepTorqueBase, TestHyundaiCanfdLFASteeringBase):
-  pass
-
-
-class TestHyundaiCanfdCreepDynamicTorqueLFA(HyundaiCanfdCreepTorqueBase, TestHyundaiCanfdLFASteeringBase):
-  DYNAMIC_CREEP_TORQUE = True
-  DYNAMIC_MAX_TORQUE = True
-  MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
-
-  def _get_max_torque(self, speed):
-    return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
-
-
 class HyundaiCanfdDynamicTorqueBase:
-  MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
+  MAX_TORQUE_LOOKUP = [11., 13., 17.], [384, 350, 270]
   DYNAMIC_MAX_TORQUE = True
   STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
   GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
@@ -428,12 +326,94 @@ class HyundaiCanfdDynamicTorqueBase:
     # Existing Hyundai tests use raw wheel-speed counts; dynamic tests use m/s.
     return super()._speed_msg(speed * 3.6 / 0.03125)
 
+  @staticmethod
+  def _controller_speed_for_test(speed):
+    wheel_count = round(speed * 3.6 / 0.03125)
+    v_ego_raw = float(np.float32(wheel_count * 0.03125 / 3.6))
+    return float(np.ceil(v_ego_raw * 1000.)) / 1000.
+
   def _get_max_torque(self, speed):
-    # Cap the generic speed/rounding tolerance at the nominal CAN-FD curve.
-    return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
+    # Match the DBC wheel-speed quantization, Float32 CarState field, and the
+    # controller's conservative upper 0.001 m/s bin.
+    controller_speed = self._controller_speed_for_test(speed)
+    return int(float(np.interp(controller_speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])) + 0.5)
+
+  @staticmethod
+  def _get_rate_limits(speed):
+    controller_speed = HyundaiCanfdDynamicTorqueBase._controller_speed_for_test(speed)
+    rate_up = int(float(np.interp(controller_speed, [11., 13.], [10., 2.])) + 0.5)
+    rate_down = int(float(np.interp(controller_speed, [11., 13.], [10., 3.])) + 0.5)
+    return rate_up, rate_down
+
+  # The common safety tests assume fixed rate and RT limits. Exercise the same
+  # invariants against every section of this speed-dependent profile instead.
+  def test_steer_safety_check(self):
+    for speed in self._torque_speed_range:
+      self._reset_safety_hooks()
+      self.safety.init_tests()
+      self._reset_speed_measurement(speed)
+      max_torque = self._get_max_torque(speed)
+      for enabled in (False, True):
+        for torque in (-max_torque - 1, -max_torque, 0, max_torque, max_torque + 1):
+          self.safety.set_controls_allowed(enabled)
+          self._set_prev_torque(torque)
+          expected = torque == 0 or (enabled and abs(torque) <= max_torque)
+          self.assertEqual(self._tx(self._torque_cmd_msg(torque)), expected, (speed, enabled, torque))
+
+  def test_non_realtime_limit_up(self):
+    for speed in (0., 11., 11.5, 12., 12.5, 13., 17., 30.):
+      rate_up, _ = self._get_rate_limits(speed)
+      self._reset_safety_hooks()
+      self.safety.init_tests()
+      self._reset_speed_measurement(speed)
+      self._reset_torque_driver_measurement(0)
+      for sign in (-1, 1):
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(sign * 100)
+        self.assertTrue(self._tx(self._torque_cmd_msg(sign * (100 + rate_up))), (speed, rate_up))
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(sign * 100)
+        self.assertFalse(self._tx(self._torque_cmd_msg(sign * (101 + rate_up))), (speed, rate_up))
+
+  def test_against_torque_driver(self):
+    for speed in (0., 12., 13., 17., 30.):
+      max_torque = self._get_max_torque(speed)
+      _, rate_down = self._get_rate_limits(speed)
+      self._reset_safety_hooks()
+      self.safety.init_tests()
+      self._reset_speed_measurement(speed)
+      for sign in (-1, 1):
+        for driver_torque in (self.DRIVER_TORQUE_ALLOWANCE, self.DRIVER_TORQUE_ALLOWANCE + 1):
+          self._reset_torque_driver_measurement(-driver_torque * sign)
+          self.safety.set_controls_allowed(True)
+          self._set_prev_torque(max_torque * sign)
+          self.assertEqual(self._tx(self._torque_cmd_msg(max_torque * sign)),
+                           driver_torque == self.DRIVER_TORQUE_ALLOWANCE, (speed, driver_torque))
+
+        opposing_driver = int(max_torque / self.DRIVER_TORQUE_FACTOR + self.DRIVER_TORQUE_ALLOWANCE + 1)
+        self._reset_torque_driver_measurement(-opposing_driver * sign)
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(max_torque * sign)
+        self.assertTrue(self._tx(self._torque_cmd_msg((max_torque - rate_down) * sign)), (speed, rate_down))
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(max_torque * sign)
+        self.assertFalse(self._tx(self._torque_cmd_msg((max_torque - rate_down + 1) * sign)), (speed, rate_down))
+
+  def test_realtime_limits(self):
+    for speed, max_rt_delta in ((0., 270), (17., 112), (30., 112)):
+      for sign in (-1, 1):
+        self._reset_safety_hooks()
+        self.safety.init_tests()
+        self._reset_speed_measurement(speed)
+        self._reset_torque_driver_measurement(0)
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(0)
+        for torque in range(max_rt_delta + 1):
+          self.assertTrue(self._tx(self._torque_cmd_msg(sign * torque)), (speed, torque))
+        self.assertFalse(self._tx(self._torque_cmd_msg(sign * (max_rt_delta + 1))), (speed, max_rt_delta))
 
   def test_dynamic_torque_boundaries(self):
-    for speed, maximum in ((0., 350), (9., 350), (13., 350), (13.1, 348), (13.4, 342),
+    for speed, maximum in ((0., 384), (11., 384), (12., 367), (12.5, 359), (13., 350), (13.1, 348), (13.4, 342),
                            (14., 330), (15., 310), (16., 290), (17., 270), (18., 270), (30., 270)):
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
@@ -446,9 +426,9 @@ class HyundaiCanfdDynamicTorqueBase:
     param = self.safety.get_current_safety_param() & ~HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE
     self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param)
     self.safety.init_tests()
-    for speed in (0., 13., 17.):
+    for speed in (0., 11., 13., 17.):
       self._reset_speed_measurement(speed)
-      for torque in (-350, -271, -270, 270, 271, 350):
+      for torque in (-384, -271, -270, 270, 271, 384):
         self.safety.set_controls_allowed(True)
         self._set_prev_torque(torque)
         assert self._tx(self._torque_cmd_msg(torque)) == (abs(torque) <= 270)
@@ -457,7 +437,7 @@ class HyundaiCanfdDynamicTorqueBase:
     # sunnypilot can allow lateral control while ACC is disengaged. The same
     # speed-dependent ceiling must still be enforced in that state.
     self.safety.set_mads_params(True, False, False)
-    for speed, maximum in ((0., 350), (15., 310), (17., 270)):
+    for speed, maximum in ((0., 384), (12., 367), (15., 310), (17., 270)):
       self._reset_speed_measurement(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):
@@ -478,7 +458,8 @@ class HyundaiCanfdDynamicTorqueBase:
         self._rx(self.packer.make_can_msg_safety("WHEEL_SPEEDS", self.PT_BUS, values))
       speed = sum(values.values()) / 4 / 3.6
       # CarState.vEgoRaw is serialized as Float32 before the controller reads it.
-      torque = self._get_max_torque(float(np.float32(speed)))
+      controller_speed = float(np.ceil(float(np.float32(speed)) * 1000.)) / 1000.
+      torque = int(float(np.interp(controller_speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])) + 0.5)
       self.safety.set_controls_allowed(True)
       self._set_prev_torque(torque)
       assert self._tx(self._torque_cmd_msg(torque)), (speed, torque, self.safety.get_vehicle_speed_min())

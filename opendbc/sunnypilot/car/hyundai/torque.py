@@ -12,8 +12,8 @@ def supports_low_speed_torque(CP: CarParams | None) -> bool:
               CP.safetyConfigs and CP.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiCanfd)
 
 
-def configure_low_speed_torque(CP: CarParams, enabled: bool, creep_lane_change_enabled: bool = False) -> None:
-  """Configure HKG torque features before CarInterface constructs the controller; never call onroad."""
+def configure_low_speed_torque(CP: CarParams, enabled: bool) -> None:
+  """Configure the unified HKG low-speed steering feature before constructing the controller."""
   if CP.brand != "hyundai":
     return
 
@@ -24,9 +24,8 @@ def configure_low_speed_torque(CP: CarParams, enabled: bool, creep_lane_change_e
 
   supported = supports_low_speed_torque(CP)
   if enabled and supported:
-    CP.flags |= HyundaiFlags.CANFD_DYNAMIC_TORQUE.value
+    # One setting enables both the 2022 low-speed steering profile and the
+    # existing 0-5 km/h automatic lane-change behavior. Panda only needs the
+    # torque-profile bit; the lane-change bit remains an openpilot-side flag.
+    CP.flags |= (HyundaiFlags.CANFD_DYNAMIC_TORQUE | HyundaiFlags.CANFD_CREEP_LANE_CHANGE).value
     CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE.value
-
-  if creep_lane_change_enabled and supported:
-    CP.flags |= HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
-    CP.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE.value

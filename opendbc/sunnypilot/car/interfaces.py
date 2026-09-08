@@ -85,9 +85,7 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
 
   params_dict = {k: v for param in params_list for k, v in param.items()}
 
-  configure_low_speed_torque(CP,
-                             params_dict.get("HkgLowSpeedTorque") in (True, "1"),
-                             params_dict.get("HkgCreepLaneChange") in (True, "1"))
+  configure_low_speed_torque(CP, params_dict.get("HkgLowSpeedTorque") in (True, "1"))
   _initialize_custom_longitudinal_tuning(CI, CP, CP_SP, params_dict)
   _initialize_coop_steering(CP, CP_SP, params_dict)
   _initialize_tesla_mads_screen_button(CP, CP_SP, params_dict)
