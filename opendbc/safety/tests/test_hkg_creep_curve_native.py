@@ -49,6 +49,8 @@ class TestHkgCreepCurveNative(unittest.TestCase):
     else:
       data[2] = self.counter % 256
     self.counter += 1
+    if address == 0x1CF:  # CRUISE_BUTTONS has a nibble counter but no checksum.
+      return libsafety_py.make_CANPacket(address, bus, data)
     crc = binascii.crc_hqx(bytes(data[2:]) + address.to_bytes(2, 'little'), 0)
     crc ^= {8: 0x5F29, 16: 0x041D, 24: 0x819D, 32: 0x9F5B}[len(data)]
     data[:2] = crc.to_bytes(2, 'little')
@@ -86,6 +88,33 @@ class TestHkgCreepCurveNative(unittest.TestCase):
     data[5] = (raw & 0x7F) << 1
     data[6] = ((raw >> 7) & 0xF) | 0x10
     return self.safety.safety_tx_hook(self.packet(self.steer_addr, 0, data))
+
+  def test_periodic_rx_check_accepts_low_frequency_blinkers(self):
+    for lka in (False, True):
+      self.configure(lka=lka)
+      for counter in range(8):
+        for address, bus, length in ((0x35, self.pt_bus, 32), (0x175, self.pt_bus, 24),
+                                     (0xA0, self.pt_bus, 24), (0xEA, self.pt_bus, 24),
+                                     (0x1CF, self.pt_bus, 8), (0x1A0, self.pt_bus if lka else 2, 32)):
+          self.counter = counter
+          self.assertTrue(self.safety.safety_rx_hook(self.packet(address, bus, bytearray(length))))
+        self.blink()
+      self.safety.set_controls_allowed(True)
+      self.safety.safety_tick_current_safety_config()
+      self.assertTrue(self.safety.safety_config_valid())
+      self.assertTrue(self.safety.get_controls_allowed())
+
+      # Refresh every other required message, but let BLINKERS alone expire.
+      self.safety.set_timer(2600101)
+      for address, bus, length in ((0x35, self.pt_bus, 32), (0x175, self.pt_bus, 24),
+                                   (0xA0, self.pt_bus, 24), (0xEA, self.pt_bus, 24),
+                                   (0x1CF, self.pt_bus, 8), (0x1A0, self.pt_bus if lka else 2, 32)):
+        self.counter = 8
+        self.assertTrue(self.safety.safety_rx_hook(self.packet(address, bus, bytearray(length))))
+      self.safety.set_controls_allowed(True)
+      self.safety.safety_tick_current_safety_config()
+      self.assertFalse(self.safety.safety_config_valid())
+      self.assertFalse(self.safety.get_controls_allowed())
 
   def test_boundaries_and_controller_agreement(self):
     for dynamic in (False, True):

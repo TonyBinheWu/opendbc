@@ -47,8 +47,9 @@
 
 // BLINKERS has no checksum/counter fields. Kept last in every RX array so it
 // can be excluded completely when the creep feature is disabled.
+// Its 4 Hz rate is below the generic 10 Hz minimum; the 2.5 s lag check still applies.
 #define HYUNDAI_CANFD_CREEP_RX_CHECK(pt_bus) \
-  {.msg = {{0x413, (pt_bus), 8, 4U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+  {.msg = {{0x413, (pt_bus), 8, 4U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true, .ignore_frequency_check = true}, { 0 }, { 0 }}},
 
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
