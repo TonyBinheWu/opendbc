@@ -30,18 +30,21 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
         self.assertTrue(all(not c.safetyParam & HyundaiSafetyFlags.CANFD_CREEP_LANE_CHANGE for c in CP.safetyConfigs))
 
   def test_creep_torque_curve_and_active_gate(self):
+    for actual, expected in zip(CREEP_LANE_CHANGE_SPEED_BP, [0., 21. / 3.6, 30. / 3.6], strict=True):
+      self.assertAlmostEqual(actual, expected)
     CP = CarInterface.get_non_essential_params(CAR.KIA_EV6)
     for dynamic_enabled, end_max in ((False, 270), (True, 350)):
       with self.subTest(dynamic_enabled=dynamic_enabled):
         configure_low_speed_torque(CP, dynamic_enabled, True)
         params = CarControllerParams(CP)
         midpoint_max = round((400 + end_max) / 2)
-        for speed, expected in ((0., 400), (CREEP_LANE_CHANGE_SPEED_BP[1], 400),
+        for speed, expected in ((0., 400), (20. / 3.6, 400), (CREEP_LANE_CHANGE_SPEED_BP[1], 400),
                                 ((CREEP_LANE_CHANGE_SPEED_BP[1] + CREEP_LANE_CHANGE_SPEED_BP[2]) / 2, midpoint_max),
                                 (CREEP_LANE_CHANGE_SPEED_BP[2], end_max)):
           self.assertEqual(get_steer_max(params, CP.flags, speed, True), expected)
         self.assertEqual(get_steer_max(params, CP.flags, CREEP_LANE_CHANGE_SPEED_BP[2] + 0.01, True), end_max)
         self.assertEqual(get_steer_max(params, CP.flags, 0., False), end_max)
+        self.assertEqual(get_steer_max(params, CP.flags, 20. / 3.6, False), end_max)
 
         CP.flags &= ~HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
         self.assertEqual(get_steer_max(params, CP.flags, 0., True), end_max)

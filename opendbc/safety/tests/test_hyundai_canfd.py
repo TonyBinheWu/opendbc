@@ -338,8 +338,8 @@ class HyundaiCanfdCreepTorqueBase:
   def test_creep_torque_boundaries(self):
     end_max = 350 if self.DYNAMIC_CREEP_TORQUE else 270
     midpoint_max = round((400 + end_max) / 2)
-    for speed, maximum in ((0., 400), (2. / 3.6, 400), (3.5 / 3.6, midpoint_max),
-                           (5. / 3.6, end_max), (5.01 / 3.6, end_max)):
+    for speed, maximum in ((0., 400), (20. / 3.6, 400), (21. / 3.6, 400), (25.5 / 3.6, midpoint_max),
+                           (30. / 3.6, end_max), (30.01 / 3.6, end_max)):
       self._allow_creep(speed)
       for sign in (-1, 1):
         for torque in (maximum, maximum + 1):

@@ -29,7 +29,7 @@ MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 # naturally on brake press. We send ~100 ms later if it fails to do so, or if we want to cancel for another reason.
 CANCEL_BUTTON_DELAY_FRAMES = 10
 
-CREEP_LANE_CHANGE_SPEED_BP = [0., 2. * CV.KPH_TO_MS, 5. * CV.KPH_TO_MS]
+CREEP_LANE_CHANGE_SPEED_BP = [0., 21. * CV.KPH_TO_MS, 30. * CV.KPH_TO_MS]
 CREEP_LANE_CHANGE_STEER_MAX = 400
 
 
@@ -40,12 +40,15 @@ def get_steer_max(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_a
 
   creep_enabled = bool(flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE and creep_lane_change_active)
   if creep_enabled and 0. <= v_ego <= CREEP_LANE_CHANGE_SPEED_BP[-1]:
-    steer_max_at_five = params.STEER_MAX
+    steer_max_at_end = params.STEER_MAX
     if flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
-      steer_max_at_five = round(float(np.interp(CREEP_LANE_CHANGE_SPEED_BP[-1],
+      steer_max_at_end = round(float(np.interp(CREEP_LANE_CHANGE_SPEED_BP[-1],
                                                 params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])))
-    creep_max = round(float(np.interp(v_ego, CREEP_LANE_CHANGE_SPEED_BP,
-                                     [CREEP_LANE_CHANGE_STEER_MAX, CREEP_LANE_CHANGE_STEER_MAX, steer_max_at_five])))
+    # Panda stores wheel speed at 0.001 m/s resolution. Use the upper bin so
+    # Float32/rounding differences cannot request one unit above its taper.
+    creep_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
+    creep_max = round(float(np.interp(creep_speed, CREEP_LANE_CHANGE_SPEED_BP,
+                                     [CREEP_LANE_CHANGE_STEER_MAX, CREEP_LANE_CHANGE_STEER_MAX, steer_max_at_end])))
     steer_max = max(steer_max, creep_max)
 
   return steer_max

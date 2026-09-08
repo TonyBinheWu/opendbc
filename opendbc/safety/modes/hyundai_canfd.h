@@ -45,6 +45,11 @@
 #define HYUNDAI_CANFD_SCC_ADDR_CHECK(scc_bus)                                                                            \
   {.msg = {{0x1a0, (scc_bus), 32, 50U, .max_counter = 0xffU, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
+// BLINKERS has no checksum/counter fields. Kept last in every RX array so it
+// can be excluded completely when the creep feature is disabled.
+#define HYUNDAI_CANFD_CREEP_RX_CHECK(pt_bus) \
+  {.msg = {{0x413, (pt_bus), 8, 4U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_canfd_dynamic_torque = false;
@@ -166,11 +171,11 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     {350., 350., 270.},
   };
   const struct lookup_t HYUNDAI_CANFD_CREEP_TORQUE_LOOKUP = {
-    {0., 2. * KPH_TO_MS, 5. * KPH_TO_MS},
+    {0., 21. * KPH_TO_MS, 30. * KPH_TO_MS},
     {400., 400., 270.},
   };
   const struct lookup_t HYUNDAI_CANFD_CREEP_DYNAMIC_TORQUE_LOOKUP = {
-    {0., 2. * KPH_TO_MS, 5. * KPH_TO_MS},
+    {0., 21. * KPH_TO_MS, 30. * KPH_TO_MS},
     {400., 400., 350.},
   };
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
@@ -180,7 +185,7 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   const bool creep_blinker_recent = hyundai_canfd_creep_blinker_seen &&
     (safety_get_ts_elapsed(microsecond_timer_get(), hyundai_canfd_creep_blinker_ts) <= 1200000U);
   const bool creep_torque_allowed = hyundai_canfd_creep_lane_change && creep_blinker_recent && !brake_pressed &&
-    (creep_speed <= (5. * KPH_TO_MS));
+    (creep_speed <= (30. * KPH_TO_MS));
   int requested_max_torque = base_max_torque;
   if (creep_torque_allowed) {
     const float creep_max_torque = hyundai_canfd_dynamic_torque ?
@@ -350,6 +355,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     if (hyundai_canfd_lka_steer_msg) {
       static RxCheck hyundai_canfd_lka_steer_msg_long_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(1)
       };
 
       ret = BUILD_SAFETY_CFG(hyundai_canfd_lka_steer_msg_long_rx_checks, HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS);
@@ -358,10 +364,12 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       // Longitudinal checks for LFA steering
       static RxCheck hyundai_canfd_long_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_long_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
@@ -389,6 +397,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_lka_steer_msg_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(1)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(1)
       };
 
       SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_rx_checks, ret);
@@ -403,11 +412,13 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_radar_scc_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_radar_scc_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(0)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       SET_TX_MSGS(HYUNDAI_CANFD_LFA_STEERING_TX_MSGS, ret);
@@ -425,11 +436,13 @@ static safety_config hyundai_canfd_init(uint16_t param) {
       static RxCheck hyundai_canfd_rx_checks[] = {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static RxCheck hyundai_canfd_alt_buttons_rx_checks[] = {
         HYUNDAI_CANFD_ALT_BUTTONS_RX_CHECKS(0)
         HYUNDAI_CANFD_SCC_ADDR_CHECK(2)
+        HYUNDAI_CANFD_CREEP_RX_CHECK(0)
       };
 
       static CanMsg hyundai_canfd_lfa_steering_camera_scc_tx_msgs[] = {
@@ -444,6 +457,10 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         SET_RX_CHECKS(hyundai_canfd_rx_checks, ret);
       }
     }
+  }
+
+  if (!hyundai_canfd_creep_lane_change) {
+    ret.rx_checks_len -= 1;
   }
 
   return ret;
