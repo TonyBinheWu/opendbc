@@ -407,6 +407,9 @@ class TestHyundaiCanfdCreepDynamicTorqueLFA(HyundaiCanfdCreepTorqueBase, TestHyu
   DYNAMIC_MAX_TORQUE = True
   MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]
 
+  def _get_max_torque(self, speed):
+    return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
+
 
 class HyundaiCanfdDynamicTorqueBase:
   MAX_TORQUE_LOOKUP = [9., 13., 17.], [350, 350, 270]

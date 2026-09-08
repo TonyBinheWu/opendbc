@@ -31,6 +31,8 @@ CANCEL_BUTTON_DELAY_FRAMES = 10
 
 CREEP_LANE_CHANGE_SPEED_BP = [0., 21. * CV.KPH_TO_MS, 30. * CV.KPH_TO_MS]
 CREEP_LANE_CHANGE_STEER_MAX = 400
+CREEP_LANE_CHANGE_DELTA_UP = 10
+CREEP_LANE_CHANGE_DELTA_DOWN = 8
 
 
 def get_steer_max(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_active: bool) -> int:
@@ -52,6 +54,16 @@ def get_steer_max(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_a
     steer_max = max(steer_max, creep_max)
 
   return steer_max
+
+
+def get_steer_rate_limits(params, flags: HyundaiFlags, v_ego: float, creep_lane_change_active: bool) -> tuple[int, int]:
+  creep_speed = float(np.ceil(v_ego * 1000.0)) / 1000.0
+  rate_max_speed = float(np.ceil(CREEP_LANE_CHANGE_SPEED_BP[1] * 1000.0)) / 1000.0
+  creep_rate_enabled = bool(flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE and creep_lane_change_active and
+                            0. <= v_ego and creep_speed <= rate_max_speed)
+  if creep_rate_enabled:
+    return CREEP_LANE_CHANGE_DELTA_UP, CREEP_LANE_CHANGE_DELTA_DOWN
+  return params.STEER_DELTA_UP, params.STEER_DELTA_DOWN
 
 
 def process_hud_alert(enabled, fingerprint, hud_control):
@@ -110,8 +122,10 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
 
     # steering torque
     steer_max = get_steer_max(self.params, self.CP.flags, CS.out.vEgoRaw, CC_SP.creepLaneChangeActive)
+    steer_delta_up, steer_delta_down = get_steer_rate_limits(self.params, self.CP.flags, CS.out.vEgoRaw, CC_SP.creepLaneChangeActive)
     new_torque = int(round(actuators.torque * steer_max))
-    apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max)
+    apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max,
+                                                    steer_delta_up=steer_delta_up, steer_delta_down=steer_delta_down)
 
     # >90 degree steering fault prevention
     self.angle_limit_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringAngleDeg) >= MAX_ANGLE, CC.latActive,

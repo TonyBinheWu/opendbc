@@ -67,10 +67,15 @@ class CurvatureSteeringLimits:
     return float(np.clip(new_apply_curvature, -self.CURVATURE_MAX, self.CURVATURE_MAX))
 
 
-def apply_driver_steer_torque_limits(apply_torque: int, apply_torque_last: int, driver_torque: float, LIMITS, steer_max: int | None = None):
+def apply_driver_steer_torque_limits(apply_torque: int, apply_torque_last: int, driver_torque: float, LIMITS, steer_max: int | None = None,
+                                     steer_delta_up: int | None = None, steer_delta_down: int | None = None):
   # some safety modes utilize a dynamic max steer
   if steer_max is None:
     steer_max = LIMITS.STEER_MAX
+  if steer_delta_up is None:
+    steer_delta_up = LIMITS.STEER_DELTA_UP
+  if steer_delta_down is None:
+    steer_delta_down = LIMITS.STEER_DELTA_DOWN
 
   # limits due to driver torque
   driver_max_torque = steer_max + (LIMITS.STEER_DRIVER_ALLOWANCE + driver_torque * LIMITS.STEER_DRIVER_FACTOR) * LIMITS.STEER_DRIVER_MULTIPLIER
@@ -81,11 +86,11 @@ def apply_driver_steer_torque_limits(apply_torque: int, apply_torque_last: int, 
 
   # slow rate if steer torque increases in magnitude
   if apply_torque_last > 0:
-    apply_torque = np.clip(apply_torque, max(apply_torque_last - LIMITS.STEER_DELTA_DOWN, -LIMITS.STEER_DELTA_UP),
-                           apply_torque_last + LIMITS.STEER_DELTA_UP)
+    apply_torque = np.clip(apply_torque, max(apply_torque_last - steer_delta_down, -steer_delta_up),
+                           apply_torque_last + steer_delta_up)
   else:
-    apply_torque = np.clip(apply_torque, apply_torque_last - LIMITS.STEER_DELTA_UP,
-                           min(apply_torque_last + LIMITS.STEER_DELTA_DOWN, LIMITS.STEER_DELTA_UP))
+    apply_torque = np.clip(apply_torque, apply_torque_last - steer_delta_up,
+                           min(apply_torque_last + steer_delta_down, steer_delta_up))
 
   return int(round(float(apply_torque)))
 

@@ -57,6 +57,7 @@ static bool hyundai_canfd_dynamic_torque = false;
 static bool hyundai_canfd_creep_lane_change = false;
 static bool hyundai_canfd_creep_blinker_seen = false;
 static uint32_t hyundai_canfd_creep_blinker_ts = 0U;
+static bool hyundai_canfd_creep_rt_active = false;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steer_msg_alt ? 0x110U : 0x50U;
@@ -94,8 +95,10 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
       if (left_blinker != right_blinker) {
         hyundai_canfd_creep_blinker_seen = true;
         hyundai_canfd_creep_blinker_ts = microsecond_timer_get();
-      } else if (left_blinker && right_blinker) {
+      } else if (left_blinker) {
         hyundai_canfd_creep_blinker_seen = false;
+      } else {
+        // Keep the recent sample through the lamps' normal off phase.
       }
     }
 
@@ -196,16 +199,30 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   }
 
   // If a prerequisite disappears or speed increases, permit only a monotonic wind-down to the new limit.
-  const int desired_torque_last_abs = desired_torque_last >= 0 ? desired_torque_last : -desired_torque_last;
-  const bool creep_torque_wind_down = hyundai_canfd_creep_lane_change && desired_torque_last_abs > requested_max_torque;
+  const int desired_torque_last_abs = (desired_torque_last >= 0) ? desired_torque_last : -desired_torque_last;
+  const bool creep_torque_wind_down = hyundai_canfd_creep_lane_change && (desired_torque_last_abs > requested_max_torque);
+  const bool creep_rate_enabled = creep_torque_allowed && (creep_speed <= (21. * KPH_TO_MS));
+  const int max_rate_up = creep_rate_enabled ? 10 : 2;
+  const int max_rate_down = creep_rate_enabled ? 8 : 3;
+  const int rt_torque_delta = desired_torque_last - rt_torque_last;
+  const int rt_torque_delta_abs = (rt_torque_delta >= 0) ? rt_torque_delta : -rt_torque_delta;
+  if (creep_rate_enabled) {
+    hyundai_canfd_creep_rt_active = true;
+  } else if (hyundai_canfd_creep_rt_active && ((rt_torque_delta_abs + max_rate_up) <= 112)) {
+    hyundai_canfd_creep_rt_active = false;
+  } else {
+    // Retain the wider RT window until the stored reference catches up.
+  }
   const int max_torque = creep_torque_wind_down ? desired_torque_last_abs : requested_max_torque;
   const TorqueSteeringLimits HYUNDAI_CANFD_STEERING_LIMITS = {
     .max_torque = max_torque,
     .dynamic_max_torque = hyundai_canfd_dynamic_torque && !creep_torque_allowed && !creep_torque_wind_down,
     .max_torque_lookup = HYUNDAI_CANFD_MAX_TORQUE_LOOKUP,
-    .max_rt_delta = 112,
-    .max_rate_up = 2,
-    .max_rate_down = 3,
+    // 10 units/frame needs 270 units/250 ms because the RT reference updates after checking the 27th 100 Hz frame.
+    // Keep it until the RT reference catches up, so crossing 21 km/h cannot reject an otherwise valid command.
+    .max_rt_delta = hyundai_canfd_creep_rt_active ? 270 : 112,
+    .max_rate_up = max_rate_up,
+    .max_rate_down = max_rate_down,
     .driver_torque_allowance = 250,
     .driver_torque_multiplier = 2,
     .type = TorqueDriverLimited,
@@ -225,7 +242,7 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   if (msg->addr == steer_addr) {
     int desired_torque = (((msg->data[6] & 0xFU) << 7U) | (msg->data[5] >> 1U)) - 1024U;
     bool steer_req = GET_BIT(msg, 52U);
-    const int desired_torque_abs = desired_torque >= 0 ? desired_torque : -desired_torque;
+    const int desired_torque_abs = (desired_torque >= 0) ? desired_torque : -desired_torque;
 
     // Normal steer-request cuts may hold torque briefly; every requested frame above the new limit must decrease.
     if (creep_torque_wind_down && (desired_torque_abs > requested_max_torque) &&
@@ -350,6 +367,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_creep_lane_change = GET_FLAG(param, HYUNDAI_PARAM_CANFD_CREEP_LANE_CHANGE);
   hyundai_canfd_creep_blinker_seen = false;
   hyundai_canfd_creep_blinker_ts = 0U;
+  hyundai_canfd_creep_rt_active = false;
 
   safety_config ret;
   if (hyundai_longitudinal) {

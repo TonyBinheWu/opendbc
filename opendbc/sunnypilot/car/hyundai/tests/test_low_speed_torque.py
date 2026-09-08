@@ -4,7 +4,7 @@ from unittest.mock import patch
 from opendbc.can import CANParser
 from opendbc.car import gen_empty_fingerprint, get_safety_config
 from opendbc.car.car_helpers import get_car
-from opendbc.car.hyundai.carcontroller import CREEP_LANE_CHANGE_SPEED_BP, get_steer_max
+from opendbc.car.hyundai.carcontroller import CREEP_LANE_CHANGE_SPEED_BP, get_steer_max, get_steer_rate_limits
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, CANFD_CAR, CarControllerParams, HyundaiFlags, HyundaiSafetyFlags
@@ -48,6 +48,19 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
 
         CP.flags &= ~HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
         self.assertEqual(get_steer_max(params, CP.flags, 0., True), end_max)
+
+  def test_creep_rate_boundaries_and_active_gate(self):
+    CP = CarInterface.get_non_essential_params(CAR.KIA_EV6)
+    configure_low_speed_torque(CP, True, True)
+    params = CarControllerParams(CP)
+    for speed, active, expected in ((-0.001, True, (2, 3)), (0., True, (10, 8)), (21. / 3.6, True, (10, 8)),
+                                    (21.01 / 3.6, True, (2, 3)), (30. / 3.6, True, (2, 3)),
+                                    (20. / 3.6, False, (2, 3))):
+      with self.subTest(speed=speed, active=active):
+        self.assertEqual(get_steer_rate_limits(params, CP.flags, speed, active), expected)
+
+    CP.flags &= ~HyundaiFlags.CANFD_CREEP_LANE_CHANGE.value
+    self.assertEqual(get_steer_rate_limits(params, CP.flags, 0., True), (2, 3))
 
   def test_scope_and_reset(self):
     for model in CAR:
@@ -173,3 +186,19 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
       parser.update([timestamp, msgs])
       self.assertEqual(actuators.torqueOutputCan, maximum)
       self.assertEqual(parser.vl["LFA"]["StrTqReqVal"], maximum)
+
+  def test_get_car_creep_command_uses_speed_dependent_rate(self):
+    fingerprint = gen_empty_fingerprint()
+    result = (CAR.KIA_EV6, fingerprint, "0" * 17, [], CarParams.FingerprintSource.can, True)
+    with patch("opendbc.car.car_helpers.fingerprint", return_value=result):
+      CI = get_car(None, None, None, False, False, init_params_list_sp=[{"HkgCreepLaneChange": True}])
+
+    CC = CarControl(enabled=True, latActive=True)
+    CC.actuators.torque = 1.
+    for speed, active, expected in ((20. / 3.6, True, 10), (21. / 3.6, True, 10),
+                                    (21.01 / 3.6, True, 2), (20. / 3.6, False, 2)):
+      with self.subTest(speed=speed, active=active):
+        CI.CS.out.vEgoRaw = speed
+        CI.CC.apply_torque_last = 100
+        actuators, _ = CI.apply(CC.as_reader(), CarControlSP(creepLaneChangeActive=active), CI.CC.frame * 10_000_000)
+        self.assertEqual(actuators.torqueOutputCan, 100 + expected)

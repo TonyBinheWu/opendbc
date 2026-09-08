@@ -18,18 +18,18 @@ class Flags(IntFlag):
 def controller_function():
   source = Path(__file__).resolve().parents[2] / 'car/hyundai/carcontroller.py'
   tree = ast.parse(source.read_text())
-  nodes = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name == 'get_steer_max') or
+  nodes = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ('get_steer_max', 'get_steer_rate_limits')) or
            (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith('CREEP_LANE_CHANGE_') for t in n.targets))]
   scope = {'np': np, 'HyundaiFlags': Flags, 'CV': SimpleNamespace(KPH_TO_MS=1 / 3.6)}
   exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
-  return scope['get_steer_max']
+  return scope['get_steer_max'], scope['get_steer_rate_limits']
 
 
 class TestHkgCreepCurveNative(unittest.TestCase):
   @classmethod
   def setUpClass(cls):
     cls.safety = libsafety_py.libsafety
-    cls.steer_max = staticmethod(controller_function())
+    cls.steer_max, cls.steer_rates = (staticmethod(f) for f in controller_function())
 
   def configure(self, dynamic=False, enabled=True, lka=False):
     self.dynamic = dynamic
@@ -89,6 +89,15 @@ class TestHkgCreepCurveNative(unittest.TestCase):
     data[6] = ((raw >> 7) & 0xF) | 0x10
     return self.safety.safety_tx_hook(self.packet(self.steer_addr, 0, data))
 
+  def tx_live(self, torque):
+    self.safety.set_controls_allowed(True)
+    self.safety.set_torque_driver(0, 0)
+    data = bytearray(16)
+    raw = torque + 1024
+    data[5] = (raw & 0x7F) << 1
+    data[6] = ((raw >> 7) & 0xF) | 0x10
+    return self.safety.safety_tx_hook(self.packet(self.steer_addr, 0, data))
+
   def test_periodic_rx_check_accepts_low_frequency_blinkers(self):
     for lka in (False, True):
       self.configure(lka=lka)
@@ -132,6 +141,42 @@ class TestHkgCreepCurveNative(unittest.TestCase):
             for sign in (-1, 1):
               self.assertTrue(self.tx(sign * expected))
               self.assertFalse(self.tx(sign * (expected + 1)))
+
+  def test_rate_boundaries_and_controller_agreement(self):
+    params = SimpleNamespace(STEER_DELTA_UP=2, STEER_DELTA_DOWN=3)
+    flags = Flags.CANFD_CREEP_LANE_CHANGE
+    for kph, active, expected in ((0., True, (10, 8)), (21., True, (10, 8)),
+                                  (21.1, True, (2, 3)), (30., True, (2, 3)), (20., False, (2, 3))):
+      with self.subTest(kph=kph, active=active):
+        self.assertEqual(self.steer_rates(params, flags, kph / 3.6, active), expected)
+        self.configure()
+        self.speed(kph)
+        if active:
+          self.blink()
+        rate_up, _ = expected
+        self.assertTrue(self.tx(100 + rate_up, previous=100))
+        self.assertFalse(self.tx(100 + rate_up + 1, previous=100))
+
+  def test_low_speed_rate_can_reach_full_torque_without_rt_rejection(self):
+    self.configure()
+    self.speed(20.)
+    self.blink()
+    for frame, torque in enumerate(range(10, 401, 10)):
+      self.safety.set_timer(100 + frame * 10_000)
+      self.assertTrue(self.tx_live(torque), (frame, torque))
+
+  def test_rt_window_survives_rate_transition(self):
+    self.configure()
+    self.speed(20.)
+    self.blink()
+    for frame, torque in enumerate(range(10, 201, 10)):
+      self.safety.set_timer(100 + frame * 10_000)
+      self.assertTrue(self.tx_live(torque), (frame, torque))
+
+    self.speed(21.1)
+    for frame, torque in enumerate(range(202, 215, 2), start=20):
+      self.safety.set_timer(100 + frame * 10_000)
+      self.assertTrue(self.tx_live(torque), (frame, torque))
 
   def test_all_quantized_wheel_speeds_in_taper(self):
     for dynamic in (False, True):
