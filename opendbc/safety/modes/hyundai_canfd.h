@@ -23,6 +23,10 @@
 #define HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(e_can, longitudinal) \
   {0x1A0, e_can, 32, .check_relay = (longitudinal)},  /* SCC_CONTROL */ \
 
+#define HYUNDAI_CANFD_HKG_CLUSTER_TEST_TX_MSGS(e_can) \
+  {0x161, e_can, 32, .check_relay = false},  /* CCNC_0x161 display test */ \
+  {0x162, e_can, 32, .check_relay = false},  /* CCNC_0x162 display test */ \
+
 // *** Addresses checked in rx hook ***
 // EV, ICE, HYBRID: ACCELERATOR (0x35), ACCELERATOR_BRAKE_ALT (0x100), ACCELERATOR_ALT (0x105)
 #define HYUNDAI_CANFD_COMMON_RX_CHECKS(pt_bus)                                                                          \
@@ -49,6 +53,9 @@ static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_canfd_dynamic_torque = false;
 static bool hyundai_canfd_low_speed_rt_active = false;
+static bool hyundai_canfd_hkg_cluster_test = false;
+static bool hyundai_canfd_hkg_cluster_test_parked = false;
+static uint16_t hyundai_canfd_hkg_cluster_test_tx_count = 0U;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steer_msg_alt ? 0x110U : 0x50U;
@@ -67,6 +74,103 @@ static uint8_t hyundai_canfd_get_counter(const CANPacket_t *msg) {
 static uint32_t hyundai_canfd_get_checksum(const CANPacket_t *msg) {
   uint32_t chksum = msg->data[0] | (msg->data[1] << 8);
   return chksum;
+}
+
+static bool hyundai_canfd_hkg_lane_color_valid(uint8_t color) {
+  return (color == 0U) || (color == 1U) || (color == 2U) || (color == 4U) || (color == 6U);
+}
+
+static bool hyundai_canfd_hkg_assist_icon_valid(uint8_t icon) {
+  return (icon == 0U) || (icon == 1U) || (icon == 2U) || (icon == 3U) || (icon == 4U);
+}
+
+static bool hyundai_canfd_hkg_status_test_valid(const CANPacket_t *msg) {
+  const uint8_t left_arrow = (msg->data[7] >> 1U) & 0x7U;
+  const uint8_t right_arrow = (msg->data[7] >> 4U) & 0x7U;
+  const uint8_t centerline = msg->data[8] & 0x3U;
+  const uint8_t left_lane = msg->data[10] & 0xFU;
+  const uint8_t left_lane_position = ((msg->data[10] >> 4U) & 0xFU) | ((msg->data[11] & 0x3U) << 4U);
+  const uint8_t right_lane = (msg->data[11] >> 2U) & 0xFU;
+  const uint8_t right_lane_position = ((msg->data[11] >> 6U) & 0x3U) | ((msg->data[12] & 0xFU) << 2U);
+  const uint8_t lane_highlight = (msg->data[13] >> 1U) & 0xFU;
+  const uint16_t lane_highlight_distance = ((msg->data[13] >> 5U) & 0x7U) | ((uint16_t)msg->data[14] << 3U);
+  const uint8_t lane_left = msg->data[15] & 0x7U;
+  const uint8_t lane_right = (msg->data[15] >> 3U) & 0x7U;
+  const uint8_t lane_zoom = (msg->data[15] >> 6U) & 0x3U;
+  const uint8_t hda_icon = (msg->data[26] >> 4U) & 0xFU;
+  const uint8_t nav_icon = (msg->data[27] >> 4U) & 0xFU;
+  const uint8_t lfa_icon = msg->data[28] & 0xFU;
+  const uint8_t lca_left_icon = (msg->data[28] >> 4U) & 0xFU;
+  const uint8_t lca_right_icon = msg->data[29] & 0xFU;
+
+  // Block collision/AEB, BCA, alert, sound, set-speed, background, DAW, and
+  // unknown/reserved fields. This test may exercise only benign display bits.
+  bool valid = (msg->data[3] == 0U) && (msg->data[4] == 0U) && (msg->data[5] == 0U) && (msg->data[6] == 0U);
+  valid &= (msg->data[7] & 0x81U) == 0U;
+  valid &= (msg->data[8] & 0xFCU) == 0U;
+  valid &= msg->data[9] == 0U;
+  for (int i = 16; i <= 25; i++) {
+    valid &= msg->data[i] == 0U;
+  }
+  valid &= (msg->data[26] & 0xFU) == 0U;
+  valid &= (msg->data[27] & 0xFU) == 0U;
+  valid &= (msg->data[29] & 0xF0U) == 0U;
+  valid &= (msg->data[30] == 0U) && (msg->data[31] == 0U);
+
+  valid &= (left_arrow <= 1U) && (right_arrow <= 1U) && (centerline <= 1U);
+  valid &= hyundai_canfd_hkg_lane_color_valid(left_lane) && hyundai_canfd_hkg_lane_color_valid(right_lane);
+  valid &= (left_lane_position <= 30U) && (right_lane_position <= 30U);
+  // Keep the signed curvature field at its neutral raw value (physical 15).
+  valid &= ((msg->data[12] & 0xF0U) == 0U) && ((msg->data[13] & 0x1U) == 0U);
+  valid &= (lane_highlight == 0U) || (lane_highlight == 1U) || (lane_highlight == 2U) || (lane_highlight == 4U);
+  valid &= lane_highlight_distance <= 1000U;
+  valid &= (lane_left <= 1U) && (lane_right <= 1U) && (lane_zoom <= 1U);
+  valid &= (hda_icon <= 3U) && hyundai_canfd_hkg_assist_icon_valid(nav_icon) && (nav_icon != 3U);
+  valid &= (lfa_icon <= 3U) && hyundai_canfd_hkg_assist_icon_valid(lca_left_icon) && (lca_left_icon != 3U);
+  valid &= hyundai_canfd_hkg_assist_icon_valid(lca_right_icon) && (lca_right_icon != 3U);
+  return valid;
+}
+
+static bool hyundai_canfd_hkg_object_kind_valid(uint8_t kind, bool alternate_slot) {
+  return alternate_slot ? (kind <= 4U) : (kind <= 14U);
+}
+
+static bool hyundai_canfd_hkg_objects_test_valid(const CANPacket_t *msg) {
+  const uint8_t kinds[] = {
+    msg->data[8] & 0x1FU,
+    msg->data[11] & 0x1FU,
+    msg->data[14] & 0x1FU,
+    msg->data[17] & 0x1FU,
+  };
+  const uint16_t distances[] = {
+    ((msg->data[8] >> 5U) & 0x7U) | ((uint16_t)msg->data[9] << 3U),
+    ((msg->data[11] >> 5U) & 0x7U) | ((uint16_t)msg->data[12] << 3U),
+    ((msg->data[14] >> 5U) & 0x7U) | ((uint16_t)msg->data[15] << 3U),
+    ((msg->data[17] >> 5U) & 0x7U) | ((uint16_t)msg->data[18] << 3U),
+  };
+  const uint8_t laterals[] = {
+    msg->data[10] & 0x7FU,
+    msg->data[13] & 0x7FU,
+    msg->data[16] & 0x7FU,
+    msg->data[19] & 0x7FU,
+  };
+
+  bool valid = true;
+  for (int i = 3; i <= 7; i++) {
+    valid &= msg->data[i] == 0U;
+  }
+  valid &= ((msg->data[10] & 0x80U) == 0U) && ((msg->data[13] & 0x80U) == 0U);
+  valid &= ((msg->data[16] & 0x80U) == 0U) && ((msg->data[19] & 0x80U) == 0U);
+  for (int i = 20; i <= 31; i++) {
+    valid &= msg->data[i] == 0U;
+  }
+
+  for (int i = 0; i < 4; i++) {
+    valid &= hyundai_canfd_hkg_object_kind_valid(kinds[i], i == 1);
+    valid &= distances[i] <= 1000U;
+    valid &= laterals[i] <= 100U;
+  }
+  return valid;
 }
 
 static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
@@ -102,6 +206,7 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
     // gas press, different for EV, hybrid, and ICE models
     if ((msg->addr == 0x35U) && hyundai_ev_gas_signal) {
       gas_pressed = msg->data[5] != 0U;
+      hyundai_canfd_hkg_cluster_test_parked = (msg->data[24] & 0x7U) == 0U;
     } else if ((msg->addr == 0x105U) && hyundai_hybrid_gas_signal) {
       gas_pressed = GET_BIT(msg, 103U) || (msg->data[13] != 0U) || GET_BIT(msg, 112U);
     } else if ((msg->addr == 0x100U) && !hyundai_ev_gas_signal && !hyundai_hybrid_gas_signal) {
@@ -198,6 +303,21 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
 
+  if ((msg->addr == 0x161U) || (msg->addr == 0x162U)) {
+    const uint16_t hkg_cluster_test_max_tx = 1600U;
+    const bool checksum_valid = hyundai_canfd_get_checksum(msg) == hyundai_common_canfd_compute_checksum(msg);
+    const bool payload_valid = (msg->addr == 0x161U) ? hyundai_canfd_hkg_status_test_valid(msg) :
+                                                       hyundai_canfd_hkg_objects_test_valid(msg);
+    const bool interlocks_valid = hyundai_canfd_hkg_cluster_test && hyundai_canfd_hkg_cluster_test_parked &&
+                                  !vehicle_moving && !controls_allowed && !controls_allowed_lateral && !gas_pressed;
+    if (!checksum_valid || !payload_valid || !interlocks_valid ||
+        (hyundai_canfd_hkg_cluster_test_tx_count >= hkg_cluster_test_max_tx)) {
+      tx = false;
+    } else {
+      hyundai_canfd_hkg_cluster_test_tx_count++;
+    }
+  }
+
   // steering
   const unsigned int steer_addr = (hyundai_canfd_lka_steer_msg && !hyundai_longitudinal) ? hyundai_canfd_get_lka_addr() : 0x12aU;
   if (msg->addr == steer_addr) {
@@ -274,19 +394,44 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT = 128;
   const uint16_t HYUNDAI_PARAM_CANFD_ALT_BUTTONS = 32;
   const uint16_t HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE = 1024;
+  const uint16_t HYUNDAI_PARAM_CANFD_HKG_CLUSTER_TEST = 4096;
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
+  };
+
+  static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_HKG_CLUSTER_TEST_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_HKG_CLUSTER_TEST_TX_MSGS(1)
   };
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_ALT_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_ALT_COMMON_TX_MSGS(0, 1)
   };
 
+  static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_ALT_HKG_CLUSTER_TEST_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEER_MSG_ALT_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_HKG_CLUSTER_TEST_TX_MSGS(1)
+  };
+
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS[] = {
     HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
     HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(1)
     HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, true)
+    {0x51,  0, 32, .check_relay = false},  // ADRV_0x51
+    {0x730, 1,  8, .check_relay = false},  // tester present for ADAS ECU disable
+    {0x160, 1, 16, .check_relay = false},  // ADRV_0x160
+    {0x1EA, 1, 32, .check_relay = false},  // ADRV_0x1ea
+    {0x200, 1,  8, .check_relay = false},  // ADRV_0x200
+    {0x345, 1,  8, .check_relay = false},  // ADRV_0x345
+    {0x1DA, 1, 32, .check_relay = false},  // ADRV_0x1da
+  };
+
+  static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_LONG_HKG_CLUSTER_TEST_TX_MSGS[] = {
+    HYUNDAI_CANFD_LKA_STEER_MSG_COMMON_TX_MSGS(0, 1)
+    HYUNDAI_CANFD_LFA_STEERING_COMMON_TX_MSGS(1)
+    HYUNDAI_CANFD_SCC_CONTROL_COMMON_TX_MSGS(1, true)
+    HYUNDAI_CANFD_HKG_CLUSTER_TEST_TX_MSGS(1)
     {0x51,  0, 32, .check_relay = false},  // ADRV_0x51
     {0x730, 1,  8, .check_relay = false},  // tester present for ADAS ECU disable
     {0x160, 1, 16, .check_relay = false},  // ADRV_0x160
@@ -325,6 +470,9 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_lka_steer_msg_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT);
   hyundai_canfd_dynamic_torque = GET_FLAG(param, HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE);
   hyundai_canfd_low_speed_rt_active = false;
+  hyundai_canfd_hkg_cluster_test = GET_FLAG(param, HYUNDAI_PARAM_CANFD_HKG_CLUSTER_TEST);
+  hyundai_canfd_hkg_cluster_test_parked = false;
+  hyundai_canfd_hkg_cluster_test_tx_count = 0U;
 
   safety_config ret;
   if (hyundai_longitudinal) {
@@ -333,7 +481,11 @@ static safety_config hyundai_canfd_init(uint16_t param) {
         HYUNDAI_CANFD_STD_BUTTONS_RX_CHECKS(1)
       };
 
-      ret = BUILD_SAFETY_CFG(hyundai_canfd_lka_steer_msg_long_rx_checks, HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS);
+      if (hyundai_canfd_hkg_cluster_test) {
+        ret = BUILD_SAFETY_CFG(hyundai_canfd_lka_steer_msg_long_rx_checks, HYUNDAI_CANFD_LKA_STEER_MSG_LONG_HKG_CLUSTER_TEST_TX_MSGS);
+      } else {
+        ret = BUILD_SAFETY_CFG(hyundai_canfd_lka_steer_msg_long_rx_checks, HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS);
+      }
 
     } else {
       // Longitudinal checks for LFA steering
@@ -374,9 +526,17 @@ static safety_config hyundai_canfd_init(uint16_t param) {
 
       SET_RX_CHECKS(hyundai_canfd_lka_steer_msg_rx_checks, ret);
       if (hyundai_canfd_lka_steer_msg_alt) {
-        SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_ALT_TX_MSGS, ret);
+        if (hyundai_canfd_hkg_cluster_test) {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_ALT_HKG_CLUSTER_TEST_TX_MSGS, ret);
+        } else {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_ALT_TX_MSGS, ret);
+        }
       } else {
-        SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS, ret);
+        if (hyundai_canfd_hkg_cluster_test) {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_HKG_CLUSTER_TEST_TX_MSGS, ret);
+        } else {
+          SET_TX_MSGS(HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS, ret);
+        }
       }
 
     } else if (!hyundai_camera_scc) {

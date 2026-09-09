@@ -78,6 +78,7 @@ class HyundaiSafetyFlags(IntFlag):
   ALT_LIMITS_2 = 512
   CANFD_DYNAMIC_TORQUE = 1024
   CANFD_CREEP_LANE_CHANGE = 2048  # reserved; legacy setting bit is no longer emitted
+  CANFD_HKG_CLUSTER_TEST = 4096
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:
@@ -164,6 +165,9 @@ class HyundaiFlags(IntFlag):
 
   # Enables the low-speed automatic lane-change behavior together with HKG low-speed torque.
   CANFD_CREEP_LANE_CHANGE = 2 ** 28
+
+  # Enables only the guarded, park-only EV6 0x161/0x162 display test path.
+  CANFD_HKG_CLUSTER_TEST = 2 ** 29
 
 
 @dataclass
