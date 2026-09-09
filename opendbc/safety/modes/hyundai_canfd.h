@@ -25,7 +25,6 @@
 
 #define HYUNDAI_CANFD_HKG_CLUSTER_TEST_TX_MSGS(e_can) \
   {0x161, e_can, 32, .check_relay = false},  /* CCNC_0x161 display test */ \
-  {0x162, e_can, 32, .check_relay = false},  /* CCNC_0x162 display test */ \
 
 // *** Addresses checked in rx hook ***
 // EV, ICE, HYBRID: ACCELERATOR (0x35), ACCELERATOR_BRAKE_ALT (0x100), ACCELERATOR_ALT (0x105)
@@ -128,48 +127,6 @@ static bool hyundai_canfd_hkg_status_test_valid(const CANPacket_t *msg) {
   valid &= (hda_icon <= 3U) && hyundai_canfd_hkg_assist_icon_valid(nav_icon) && (nav_icon != 3U);
   valid &= (lfa_icon <= 3U) && hyundai_canfd_hkg_assist_icon_valid(lca_left_icon) && (lca_left_icon != 3U);
   valid &= hyundai_canfd_hkg_assist_icon_valid(lca_right_icon) && (lca_right_icon != 3U);
-  return valid;
-}
-
-static bool hyundai_canfd_hkg_object_kind_valid(uint8_t kind, bool alternate_slot) {
-  return alternate_slot ? (kind <= 4U) : (kind <= 14U);
-}
-
-static bool hyundai_canfd_hkg_objects_test_valid(const CANPacket_t *msg) {
-  const uint8_t kinds[] = {
-    msg->data[8] & 0x1FU,
-    msg->data[11] & 0x1FU,
-    msg->data[14] & 0x1FU,
-    msg->data[17] & 0x1FU,
-  };
-  const uint16_t distances[] = {
-    ((msg->data[8] >> 5U) & 0x7U) | ((uint16_t)msg->data[9] << 3U),
-    ((msg->data[11] >> 5U) & 0x7U) | ((uint16_t)msg->data[12] << 3U),
-    ((msg->data[14] >> 5U) & 0x7U) | ((uint16_t)msg->data[15] << 3U),
-    ((msg->data[17] >> 5U) & 0x7U) | ((uint16_t)msg->data[18] << 3U),
-  };
-  const uint8_t laterals[] = {
-    msg->data[10] & 0x7FU,
-    msg->data[13] & 0x7FU,
-    msg->data[16] & 0x7FU,
-    msg->data[19] & 0x7FU,
-  };
-
-  bool valid = true;
-  for (int i = 3; i <= 7; i++) {
-    valid &= msg->data[i] == 0U;
-  }
-  valid &= ((msg->data[10] & 0x80U) == 0U) && ((msg->data[13] & 0x80U) == 0U);
-  valid &= ((msg->data[16] & 0x80U) == 0U) && ((msg->data[19] & 0x80U) == 0U);
-  for (int i = 20; i <= 31; i++) {
-    valid &= msg->data[i] == 0U;
-  }
-
-  for (int i = 0; i < 4; i++) {
-    valid &= hyundai_canfd_hkg_object_kind_valid(kinds[i], i == 1);
-    valid &= distances[i] <= 1000U;
-    valid &= laterals[i] <= 100U;
-  }
   return valid;
 }
 
@@ -304,10 +261,9 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   bool tx = true;
 
   if ((msg->addr == 0x161U) || (msg->addr == 0x162U)) {
-    const uint16_t hkg_cluster_test_max_tx = 1600U;
+    const uint16_t hkg_cluster_test_max_tx = 700U;
     const bool checksum_valid = hyundai_canfd_get_checksum(msg) == hyundai_common_canfd_compute_checksum(msg);
-    const bool payload_valid = (msg->addr == 0x161U) ? hyundai_canfd_hkg_status_test_valid(msg) :
-                                                       hyundai_canfd_hkg_objects_test_valid(msg);
+    const bool payload_valid = (msg->addr == 0x161U) && hyundai_canfd_hkg_status_test_valid(msg);
     const bool interlocks_valid = hyundai_canfd_hkg_cluster_test && hyundai_canfd_hkg_cluster_test_parked &&
                                   !vehicle_moving && !controls_allowed && !controls_allowed_lateral && !gas_pressed;
     if (!checksum_valid || !payload_valid || !interlocks_valid ||

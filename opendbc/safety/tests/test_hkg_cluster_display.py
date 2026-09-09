@@ -82,7 +82,7 @@ class TestHkgClusterDisplaySafety(unittest.TestCase):
     for page in STATUS_PAGES:
       self.assertTrue(self.safety.safety_tx_hook(self._status(page)))
     for page in OBJECT_PAGES:
-      self.assertTrue(self.safety.safety_tx_hook(self._objects(page)))
+      self.assertFalse(self.safety.safety_tx_hook(self._objects(page)))
 
   def test_init_variants(self):
     variants = (
@@ -111,7 +111,7 @@ class TestHkgClusterDisplaySafety(unittest.TestCase):
     corrupt[0] ^= 1
     self.assertFalse(self.safety.safety_tx_hook(make_msg(1, 0x161, 32, bytes(corrupt))))
 
-    for count in range(1600):
+    for count in range(700):
       self.assertTrue(self.safety.safety_tx_hook(valid), count)
     self.assertFalse(self.safety.safety_tx_hook(valid))
 
