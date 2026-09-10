@@ -233,7 +233,12 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
 
     # LFA and HDA icons
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
-      can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
+      # On the EV6, keep the cluster's assist indicator synchronized with the
+      # actual LFA state instead of the broader controls-enabled state.
+      can_sends.append(hyundaicanfd.create_lfahda_cluster(
+        self.packer, self.CAN, CC.enabled, self.lfa_icon,
+        hda_follows_lfa=self.car_fingerprint == CAR.KIA_EV6,
+      ))
 
     # blinkers
     if lka_steering and self.CP.flags & HyundaiFlags.CANFD_ENABLE_BLINKERS:
