@@ -26,6 +26,13 @@ class CarInterface(CarInterfaceBase):
 
   DRIVABLE_GEARS = (structs.CarState.GearShifter.sport, structs.CarState.GearShifter.manumatic)
 
+  def update(self, can_packets):
+    # Capture complete received frames before the ADRV ECU is disabled. The
+    # evidence-gated display path needs the raw payload so unknown fields are
+    # preserved; CANParser signal dictionaries are intentionally insufficient.
+    self.CC.factory_cluster_display.observe_can(can_packets)
+    return super().update(can_packets)
+
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "hyundai"

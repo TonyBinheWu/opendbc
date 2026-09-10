@@ -194,7 +194,8 @@ def create_fca_warning_light(packer, CAN, frame):
   return ret
 
 
-def create_adrv_messages(packer, CAN, frame):
+def create_adrv_messages(packer, CAN, frame, *, adrv_1ea_override: bytes | None = None,
+                         suppress_default_adrv_1ea: bool = False):
   # messages needed to car happy after disabling
   # the ADAS Driving ECU to do longitudinal control
 
@@ -207,13 +208,18 @@ def create_adrv_messages(packer, CAN, frame):
   ret.extend(create_fca_warning_light(packer, CAN, frame))
 
   if frame % 5 == 0:
-    values = {
-      'SET_ME_1C': 0x1c,
-      'SET_ME_FF': 0xff,
-      'SET_ME_TMP_F': 0xf,
-      'SET_ME_TMP_F_2': 0xf,
-    }
-    ret.append(packer.make_can_msg("ADRV_0x1ea", CAN.ECAN, values))
+    if adrv_1ea_override is not None:
+      if len(adrv_1ea_override) != 32:
+        raise ValueError("ADRV_0x1ea override must be exactly 32 bytes")
+      ret.append((0x1EA, adrv_1ea_override, CAN.ECAN))
+    elif not suppress_default_adrv_1ea:
+      values = {
+        'SET_ME_1C': 0x1c,
+        'SET_ME_FF': 0xff,
+        'SET_ME_TMP_F': 0xf,
+        'SET_ME_TMP_F_2': 0xf,
+      }
+      ret.append(packer.make_can_msg("ADRV_0x1ea", CAN.ECAN, values))
 
     values = {
       'SET_ME_E1': 0xe1,
