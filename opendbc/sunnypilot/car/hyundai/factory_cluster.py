@@ -54,6 +54,7 @@ class FactoryClusterStatus(StrEnum):
   ACTIVE_REAL_TARGETS = "active_real_targets"
   ACTIVE_BSM_REGION = "active_bsm_region_warning"
   ACTIVE_NO_TARGETS = "active_no_targets"
+  ACTIVE_AUTO_DETECTED = "active_auto_detected"
 
 
 class TargetSlot(StrEnum):
@@ -314,9 +315,29 @@ class VerifiedFactoryClusterProfile:
 # target mapping, firmware, and absence of ADAS-control side effects.
 VERIFIED_PROFILES: tuple[VerifiedFactoryClusterProfile, ...] = ()
 
+# Runtime capability gate. Output still requires a valid original 0x1EA
+# template captured from the vehicle; only carrotpilot LF/RF candidate bits are
+# patched, with every other byte retained from that template.
+AUTO_DETECTED_MESSAGE = VerifiedMessageProfile(
+  layout=ADRV_1EA_CANDIDATE_LAYOUT,
+  source_bus=1,
+  transmit_bus=1,
+  frequency_hz=20.0,
+  vehicle_detect_values={slot: 4 for slot in ADRV_1EA_CANDIDATE_LAYOUT.fields},
+  neutral_values={slot: (0, 0.0, 0.0) for slot in ADRV_1EA_CANDIDATE_LAYOUT.fields},
+  source_rules=(
+    SlotSourceRule(TargetSlot.LEFT_FRONT, 0.0, 120.0, -6.0, -0.5, lateral_scale=-1.0),
+    SlotSourceRule(TargetSlot.RIGHT_FRONT, 0.0, 120.0, 0.5, 6.0),
+  ),
+  allow_cached_template=True,
+  non_target_fields_static_verified=True,
+  radar_source_verified=True,
+)
+
 
 def is_ev6_hda2_candidate(CP: Any | None) -> bool:
   return bool(CP is not None and CP.brand == "hyundai" and CP.carFingerprint == CAR.KIA_EV6 and
+              not bool(getattr(CP, "fuzzyFingerprint", False)) and
               CP.flags & HyundaiFlags.CANFD and CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG)
 
 
@@ -381,7 +402,9 @@ class FactoryClusterDisplayManager:
     self.CP = CP
     self.requested = bool(CP_SP.flags & HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY) if requested is None else requested
     self.profile = profile if profile is not None else resolve_verified_profile(CP)
-    self.enabled = self.requested and self.profile is not None and self.profile.matches(CP)
+    self.auto_detected = self.profile is None and is_ev6_hda2_candidate(CP)
+    self.message = self.profile.message if self.profile is not None else AUTO_DETECTED_MESSAGE
+    self.enabled = self.requested and ((self.profile is not None and self.profile.matches(CP)) or self.auto_detected)
     self.status = configuration_status(CP, self.requested)
     if self.enabled:
       self.status = FactoryClusterStatus.UNAVAILABLE_NO_STOCK_TEMPLATE
@@ -391,9 +414,9 @@ class FactoryClusterDisplayManager:
     self.next_counter: int | None = None
 
   def observe_can(self, can_packets: Any) -> None:
-    if not self.enabled or self.profile is None:
+    if not self.enabled:
       return
-    message = self.profile.message
+    message = self.message
     for timestamp_nanos, frames in can_packets or ():
       for address, data, source_bus in frames:
         if int(source_bus) >= 128 or int(address) != message.layout.address:
@@ -408,10 +431,10 @@ class FactoryClusterDisplayManager:
             self.next_counter = (int(COUNTER.decode(frame.data)) + 1) & 0xFF
 
   def _fresh_source(self, now_nanos: int) -> bool:
-    if self.profile is None or self.latest_source is None:
+    if self.latest_source is None:
       return False
     age = (now_nanos - self.latest_source.timestamp_nanos) * 1e-9
-    return 0.0 <= age <= self.profile.message.stock_frame_timeout_s
+    return 0.0 <= age <= self.message.stock_frame_timeout_s
 
   @staticmethod
   def _fresh_radar(targets: list[FactoryClusterTarget], radar_mono_time: int, radar_valid: bool,
@@ -424,10 +447,9 @@ class FactoryClusterDisplayManager:
                   target.sourceMonoTime == radar_mono_time]
 
   def _clear_values(self) -> dict[SignalSpec, float]:
-    assert self.profile is not None
     values: dict[SignalSpec, float] = {}
-    for slot, layout in self.profile.message.layout.fields.items():
-      detect, distance, lateral = self.profile.message.neutral_values[slot]
+    for slot, layout in self.message.layout.fields.items():
+      detect, distance, lateral = self.message.neutral_values[slot]
       values[layout.detect] = detect
       if layout.distance is not None:
         values[layout.distance] = distance
@@ -436,8 +458,7 @@ class FactoryClusterDisplayManager:
     return values
 
   def _radar_values(self, targets: list[FactoryClusterTarget]) -> tuple[dict[SignalSpec, float], int]:
-    assert self.profile is not None
-    message = self.profile.message
+    message = self.message
     values = self._clear_values()
     populated = 0
     used_track_ids: set[int] = set()
@@ -449,7 +470,7 @@ class FactoryClusterDisplayManager:
       used_track_ids.add(target.trackId)
       field_layout = message.layout.fields[rule.slot]
       distance, lateral = rule.display_position(target)
-      values[field_layout.detect] = message.vehicle_detect_values[rule.slot]
+      values[field_layout.detect] = 3 if distance > 30.0 else message.vehicle_detect_values[rule.slot]
       if field_layout.distance is not None:
         values[field_layout.distance] = distance
       if field_layout.lateral is not None:
@@ -460,9 +481,9 @@ class FactoryClusterDisplayManager:
   def build_adrv_1ea(self, targets: list[FactoryClusterTarget], radar_mono_time: int, radar_valid: bool,
                      left_blindspot: bool, right_blindspot: bool, now_nanos: int) -> MessageDecision:
     del left_blindspot, right_blindspot  # BSM is never converted to a distance without a verified region profile.
-    if not self.enabled or self.profile is None:
+    if not self.enabled:
       return MessageDecision()
-    message = self.profile.message
+    message = self.message
     if message.layout.address != ADRV_OBJECTS_ADDRESS:
       self.status = FactoryClusterStatus.UNAVAILABLE_UNSUPPORTED_MESSAGE
       return MessageDecision()
@@ -493,7 +514,7 @@ class FactoryClusterDisplayManager:
       radar_fresh, fresh_targets = self._fresh_radar(targets, radar_mono_time, radar_valid, now_nanos, message.radar_timeout_s)
       if radar_fresh and message.radar_source_verified:
         values, populated = self._radar_values(fresh_targets)
-        self.status = FactoryClusterStatus.ACTIVE_REAL_TARGETS if populated else FactoryClusterStatus.ACTIVE_NO_TARGETS
+        self.status = (FactoryClusterStatus.ACTIVE_AUTO_DETECTED if self.auto_detected else FactoryClusterStatus.ACTIVE_REAL_TARGETS) if populated else FactoryClusterStatus.ACTIVE_NO_TARGETS
       else:
         # A valid template still permits an explicit verified clear. This
         # removes stale graphics but never fabricates a target.
@@ -516,7 +537,7 @@ class FactoryClusterDisplayManager:
 
 def enable_for_verified_profile(CP: Any, CP_SP: Any, requested: bool) -> FactoryClusterStatus:
   status = configuration_status(CP, requested)
-  if requested and resolve_verified_profile(CP) is not None:
+  if requested and (resolve_verified_profile(CP) is not None or is_ev6_hda2_candidate(CP)):
     CP_SP.flags |= HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY.value
   else:
     CP_SP.flags &= ~HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY.value
