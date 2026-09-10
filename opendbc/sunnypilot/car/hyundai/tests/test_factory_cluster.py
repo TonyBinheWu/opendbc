@@ -70,14 +70,14 @@ def make_profile() -> VerifiedFactoryClusterProfile:
 
 
 class TestFactoryClusterProfileGate(unittest.TestCase):
-  def test_repository_has_no_implicitly_verified_ev6(self):
-    self.assertEqual(configuration_status(make_cp(), True), FactoryClusterStatus.UNAVAILABLE_UNVERIFIED_PROFILE)
+  def test_ev6_candidate_is_auto_detected_but_waits_for_a_template(self):
+    self.assertEqual(configuration_status(make_cp(), True), FactoryClusterStatus.UNAVAILABLE_NO_STOCK_TEMPLATE)
 
-  def test_user_toggle_cannot_bypass_empty_verified_registry(self):
+  def test_user_toggle_enables_the_auto_detection_path_for_an_ev6_candidate(self):
     cp_sp = CarParamsSP()
     status = enable_for_verified_profile(make_cp(), cp_sp, True)
-    self.assertEqual(status, FactoryClusterStatus.UNAVAILABLE_UNVERIFIED_PROFILE)
-    self.assertFalse(cp_sp.flags & HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY)
+    self.assertEqual(status, FactoryClusterStatus.UNAVAILABLE_NO_STOCK_TEMPLATE)
+    self.assertTrue(cp_sp.flags & HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY)
 
   def test_exact_test_profile_requires_firmware(self):
     cp = make_cp()
