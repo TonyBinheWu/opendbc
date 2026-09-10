@@ -16,9 +16,11 @@ from opendbc.sunnypilot.car.hyundai.factory_cluster import (
   VerifiedFactoryClusterProfile,
   VerifiedMessageProfile,
   configuration_status,
+  enable_for_verified_profile,
   patch_hkg_frame,
   valid_hkg_frame,
 )
+from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
 
 def make_base(counter: int = 9) -> bytes:
@@ -70,6 +72,12 @@ def make_profile() -> VerifiedFactoryClusterProfile:
 class TestFactoryClusterProfileGate(unittest.TestCase):
   def test_repository_has_no_implicitly_verified_ev6(self):
     self.assertEqual(configuration_status(make_cp(), True), FactoryClusterStatus.UNAVAILABLE_UNVERIFIED_PROFILE)
+
+  def test_user_toggle_cannot_bypass_empty_verified_registry(self):
+    cp_sp = CarParamsSP()
+    status = enable_for_verified_profile(make_cp(), cp_sp, True)
+    self.assertEqual(status, FactoryClusterStatus.UNAVAILABLE_UNVERIFIED_PROFILE)
+    self.assertFalse(cp_sp.flags & HyundaiFlagsSP.FACTORY_CLUSTER_SIDE_DISPLAY)
 
   def test_exact_test_profile_requires_firmware(self):
     cp = make_cp()
