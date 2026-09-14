@@ -14,6 +14,7 @@ from opendbc.sunnypilot.car.hyundai.icbm import IntelligentCruiseButtonManagemen
 from opendbc.sunnypilot.car.hyundai.longitudinal.controller import LongitudinalController
 from opendbc.sunnypilot.car.hyundai.lead_data_ext import LeadDataCarController
 from opendbc.sunnypilot.car.hyundai.mads import MadsCarController
+from opendbc.sunnypilot.car.hyundai.torque import NaturalSteeringTorqueShaper
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -90,6 +91,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
 
     self.accel_last = 0
     self.apply_torque_last = 0
+    self.natural_steering = NaturalSteeringTorqueShaper()
     self.car_fingerprint = CP.carFingerprint
     self.last_button_frame = 0
     self.cancel_counter = 0
@@ -112,7 +114,12 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     # steering torque
     steer_max = get_steer_max(self.params, self.CP.flags, CS.out.vEgoRaw)
     steer_delta_up, steer_delta_down = get_steer_rate_limits(self.params, self.CP.flags, CS.out.vEgoRaw)
-    new_torque = int(round(actuators.torque * steer_max))
+    raw_torque = int(round(actuators.torque * steer_max))
+    if self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+      new_torque = self.natural_steering.update(raw_torque, self.apply_torque_last, steer_max, CC.latActive)
+    else:
+      self.natural_steering.reset()
+      new_torque = raw_torque
     apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max,
                                                     steer_delta_up=steer_delta_up, steer_delta_down=steer_delta_down)
 
