@@ -7,11 +7,11 @@ from opendbc.car.structs import CarParams
 
 
 NATURAL_STEERING_DEMAND_RATES = (
-  (0.15, 3),
-  (0.30, 4),
-  (0.50, 6),
-  (0.75, 8),
-  (1.00, 10),
+  (0.15, 2),
+  (0.30, 3),
+  (0.50, 4),
+  (0.75, 6),
+  (1.00, 8),
 )
 
 
@@ -35,17 +35,29 @@ class NaturalSteeringTorqueShaper:
   """
 
   RATE_ACCEL_PER_FRAME = 1.0
-  UNWIND_MIN_RATE = 6
-  UNWIND_RATE_BONUS = 2
-  REVERSAL_RATE = 10
+  UNWIND_MIN_RATE = 5
+  UNWIND_RATE_BONUS = 1
+  REVERSAL_RATE = 6
+  REVERSAL_CONFIRM_FRAMES = 5  # 50 ms at the 100 Hz car-control loop
 
   def __init__(self) -> None:
     self.slew_rate = 0.0
     self.phase = "inactive"
+    self.reversal_sign = 0
+    self.reversal_frames = 0
 
   def reset(self) -> None:
     self.slew_rate = 0.0
     self.phase = "inactive"
+    self._clear_reversal()
+
+  def _clear_reversal(self) -> None:
+    self.reversal_sign = 0
+    self.reversal_frames = 0
+
+  @staticmethod
+  def _sign(value: int) -> int:
+    return 1 if value > 0 else -1 if value < 0 else 0
 
   def _move_toward(self, current_torque: int, target_torque: int, max_rate: int) -> int:
     diff = target_torque - current_torque
@@ -72,6 +84,50 @@ class NaturalSteeringTorqueShaper:
       self.slew_rate = 0.0
     return shaped_torque
 
+  def _handle_reversal(self, target_torque: int, current_torque: int) -> int | None:
+    """Debounce sign flips and unload through zero before building opposite torque.
+
+    Short controller sign flips commonly occur while the desired path curvature is
+    still continuous. During the confirmation window we only unload existing torque;
+    we never build torque in the opposite direction. A persistent opposite request
+    must remain for REVERSAL_CONFIRM_FRAMES before a new S-curve can begin.
+    """
+    target_sign = self._sign(target_torque)
+    current_sign = self._sign(current_torque)
+
+    if self.reversal_sign != 0:
+      if target_sign != self.reversal_sign:
+        self._clear_reversal()
+      else:
+        self.reversal_frames += 1
+        confirmed = self.reversal_frames > self.REVERSAL_CONFIRM_FRAMES
+        self.phase = "reversal" if confirmed else "reversal_confirm"
+
+        if current_torque != 0:
+          shaped_torque = self._move_toward(current_torque, 0, self.REVERSAL_RATE)
+          if shaped_torque == 0:
+            self.slew_rate = 0.0
+          return shaped_torque
+
+        # Hold zero until the opposite-direction request has persisted for the
+        # full confirmation window. Once confirmed, allow normal turn-in below.
+        self.slew_rate = 0.0
+        if not confirmed:
+          return 0
+        self._clear_reversal()
+        return None
+
+    if current_sign != 0 and target_sign != 0 and current_sign != target_sign:
+      self.reversal_sign = target_sign
+      self.reversal_frames = 1
+      self.phase = "reversal_confirm"
+      shaped_torque = self._move_toward(current_torque, 0, self.REVERSAL_RATE)
+      if shaped_torque == 0:
+        self.slew_rate = 0.0
+      return shaped_torque
+
+    return None
+
   def update(self, target_torque: int, current_torque: int, steer_max: int, active: bool) -> int:
     if not active:
       self.reset()
@@ -83,19 +139,17 @@ class NaturalSteeringTorqueShaper:
     target_torque = max(-steer_max, min(steer_max, target_torque))
 
     if target_torque == current_torque:
+      self._clear_reversal()
       self.phase = "hold"
       self.slew_rate = max(0.0, self.slew_rate - self.RATE_ACCEL_PER_FRAME)
       return target_torque
 
-    # Direction reversals must unload through zero before torque is built in the
-    # opposite direction. Once zero is reached, the next frame starts a fresh
-    # S-curve turn-in in the new direction.
-    if current_torque != 0 and target_torque != 0 and ((current_torque > 0) != (target_torque > 0)):
-      self.phase = "reversal"
-      shaped_torque = self._move_toward(current_torque, 0, self.REVERSAL_RATE)
-      if shaped_torque == 0:
-        self.slew_rate = 0.0
-      return shaped_torque
+    if target_torque == 0:
+      self._clear_reversal()
+    else:
+      reversal_torque = self._handle_reversal(target_torque, current_torque)
+      if reversal_torque is not None:
+        return reversal_torque
 
     # Turn-in uses the requested torque ratio table. Unwind is deliberately a
     # little quicker than turn-in, while still using the same second-order
