@@ -32,3 +32,4 @@ class HyundaiFlagsSP(IntFlag):
   SPEED_LIMIT_AVAILABLE = 2 ** 9  # platforms with speed limit data available
   HAS_LKAS12 = 2 ** 10
   FACTORY_CLUSTER_SIDE_DISPLAY = 2 ** 11
+  NATURAL_STEERING = 2 ** 12  # openpilot-side comfort shaping; no Panda safety flag
