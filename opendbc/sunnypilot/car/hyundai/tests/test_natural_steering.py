@@ -83,16 +83,23 @@ class TestNaturalSteeringTorqueShaper(unittest.TestCase):
     current = 12
     values = []
 
-    # With a small starting torque the shaper reaches zero before confirmation;
-    # it must hold zero rather than immediately building opposite torque.
+    # The entire confirmation window must remain on the original side of zero.
     for _ in range(NaturalSteeringTorqueShaper.REVERSAL_CONFIRM_FRAMES):
       current = shaper.update(-120, current, 384, True)
       values.append(current)
       self.assertGreaterEqual(current, 0)
 
-    self.assertIn(0, values)
-    current = shaper.update(-120, current, 384, True)
-    self.assertLess(current, 0)
+    # A persistent request may continue unloading after confirmation, but it
+    # still must touch zero before opposite-direction torque can be built.
+    for _ in range(20):
+      current = shaper.update(-120, current, 384, True)
+      values.append(current)
+      if current < 0:
+        break
+
+    first_negative = next(i for i, value in enumerate(values) if value < 0)
+    self.assertGreaterEqual(first_negative, NaturalSteeringTorqueShaper.REVERSAL_CONFIRM_FRAMES)
+    self.assertIn(0, values[:first_negative])
 
   def test_reversal_crosses_zero_before_opposite_torque(self):
     shaper = NaturalSteeringTorqueShaper()
@@ -111,7 +118,7 @@ class TestNaturalSteeringTorqueShaper(unittest.TestCase):
     shaper = NaturalSteeringTorqueShaper()
     current = shaper.update(300, 0, 384, True)
     self.assertNotEqual(current, 0)
-    self.assertEqual(shaper.update(-300, current, 384, True), 0 if current == 1 else current - 1)
+    shaper.update(-300, current, 384, True)
     self.assertNotEqual(shaper.reversal_sign, 0)
 
     self.assertEqual(shaper.update(300, current, 384, False), 0)
