@@ -118,7 +118,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     steer_delta_up, steer_delta_down = get_steer_rate_limits(self.params, self.CP.flags, CS.out.vEgoRaw)
     raw_torque = int(round(actuators.torque * steer_max))
     if self.natural_steering_enabled:
-      new_torque = self.natural_steering.update(raw_torque, self.apply_torque_last, steer_max, CC.latActive)
+      new_torque = self.natural_steering.update(raw_torque, self.apply_torque_last, steer_max, CC.latActive, CS.out.vEgoRaw)
     else:
       self.natural_steering.reset()
       new_torque = raw_torque
