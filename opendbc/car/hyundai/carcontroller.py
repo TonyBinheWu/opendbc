@@ -275,7 +275,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
       else:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.frame % 2 == 0:
-        can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,
+        # MADS lead-distance mode can request brake-only longitudinal actuation while CC.enabled remains false.
+        can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.longActive, self.accel_last, accel, stopping, CC.cruiseControl.override,
                                                          set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning))
         self.accel_last = accel
     else:
