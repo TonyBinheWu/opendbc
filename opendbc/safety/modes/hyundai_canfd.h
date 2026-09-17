@@ -69,6 +69,18 @@ static uint32_t hyundai_canfd_get_checksum(const CANPacket_t *msg) {
   return chksum;
 }
 
+static bool hyundai_canfd_mads_follow_accel_checks(const int desired_accel) {
+  // MADS follow assist is intentionally brake-only. It gets longitudinal authority
+  // from the MADS lateral heartbeat, never from standard controls_allowed, and cannot
+  // request positive acceleration. Driver gas/brake input immediately removes authority.
+  const bool follow_allowed = m_mads_state.system_enabled && m_mads_state.longitudinal_follow_enabled &&
+                              controls_allowed_lateral && heartbeat_engaged_mads &&
+                              !gas_pressed_prev && !brake_pressed_prev;
+  const bool inactive = desired_accel == HYUNDAI_LONG_LIMITS.inactive_accel;
+  const bool brake_only_valid = (desired_accel <= 0) && (desired_accel >= HYUNDAI_LONG_LIMITS.min_accel);
+  return !(inactive || (follow_allowed && brake_only_valid));
+}
+
 static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
 
   const unsigned pt_bus = hyundai_canfd_lka_steer_msg ? 1U : 0U;
@@ -245,8 +257,13 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     bool violation = false;
 
     if (hyundai_longitudinal) {
-      violation |= longitudinal_accel_checks(desired_accel_raw, HYUNDAI_LONG_LIMITS);
-      violation |= longitudinal_accel_checks(desired_accel_val, HYUNDAI_LONG_LIMITS);
+      if (m_mads_state.longitudinal_follow_enabled) {
+        violation |= hyundai_canfd_mads_follow_accel_checks(desired_accel_raw);
+        violation |= hyundai_canfd_mads_follow_accel_checks(desired_accel_val);
+      } else {
+        violation |= longitudinal_accel_checks(desired_accel_raw, HYUNDAI_LONG_LIMITS);
+        violation |= longitudinal_accel_checks(desired_accel_val, HYUNDAI_LONG_LIMITS);
+      }
     } else {
       // only used to cancel on here
       const int acc_mode = (msg->data[8] >> 4) & 0x7U;
