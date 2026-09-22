@@ -9,7 +9,6 @@ from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParam
 from opendbc.car.interfaces import CarControllerBase
 
 from opendbc.sunnypilot.car.hyundai.escc import EsccCarController
-from opendbc.sunnypilot.car.hyundai.factory_cluster import FactoryClusterDisplayManager
 from opendbc.sunnypilot.car.hyundai.icbm import IntelligentCruiseButtonManagementInterface
 from opendbc.sunnypilot.car.hyundai.longitudinal.controller import LongitudinalController
 from opendbc.sunnypilot.car.hyundai.lead_data_ext import LeadDataCarController
@@ -93,12 +92,6 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     self.car_fingerprint = CP.carFingerprint
     self.last_button_frame = 0
     self.cancel_counter = 0
-    self.factory_cluster_display = FactoryClusterDisplayManager(CP, CP_SP)
-
-  @property
-  def factory_cluster_display_status(self) -> str:
-    return self.factory_cluster_display.status.value
-
   def update(self, CC, CC_SP, CS, now_nanos):
     EsccCarController.update(self, CS)
     LeadDataCarController.update(self, CC_SP)
@@ -252,26 +245,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
 
     if self.CP.openpilotLongitudinalControl:
       if lka_steering:
-        adrv_1ea_override = None
-        suppress_default_adrv_1ea = False
-        if self.frame % 5 == 0:
-          display_decision = self.factory_cluster_display.build_adrv_1ea(
-            CC_SP.factoryClusterTargets,
-            CC_SP.factoryClusterRadarMonoTime,
-            CC_SP.factoryClusterRadarValid,
-            CS.out.leftBlindspot,
-            CS.out.rightBlindspot,
-            now_nanos,
-          )
-          adrv_1ea_override = display_decision.data
-          suppress_default_adrv_1ea = display_decision.suppress_default
-        can_sends.extend(hyundaicanfd.create_adrv_messages(
-          self.packer,
-          self.CAN,
-          self.frame,
-          adrv_1ea_override=adrv_1ea_override,
-          suppress_default_adrv_1ea=suppress_default_adrv_1ea,
-        ))
+        can_sends.extend(hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame))
       else:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.frame % 2 == 0:
