@@ -138,17 +138,6 @@ class LeadData:
 
 
 @auto_dataclass
-class FactoryClusterTarget:
-  """A measured radar point transported only for factory-cluster rendering."""
-  trackId: int = auto_field()
-  sourceMonoTime: int = auto_field()
-  dRel: float = auto_field()
-  yRel: float = auto_field()
-  vRel: float = auto_field()
-  measured: bool = auto_field()
-
-
-@auto_dataclass
 class CarControlSP:
   mads: 'ModularAssistiveDrivingSystem' = field(default_factory=lambda: ModularAssistiveDrivingSystem())
   params: list['CarControlSP.Param'] = auto_field()
@@ -156,9 +145,6 @@ class CarControlSP:
   leadTwo: 'LeadData' = field(default_factory=lambda: LeadData())
   intelligentCruiseButtonManagement: 'IntelligentCruiseButtonManagement' = field(default_factory=lambda: IntelligentCruiseButtonManagement())
   creepLaneChangeActive: bool = auto_field()
-  factoryClusterTargets: list['FactoryClusterTarget'] = auto_field()
-  factoryClusterRadarMonoTime: int = auto_field()
-  factoryClusterRadarValid: bool = auto_field()
 
   @auto_dataclass
   class Param:
