@@ -33,8 +33,8 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
   def test_curve_and_feedback(self):
     # vEgo deliberately differs: the curve must use unfiltered wheel speed.
     self.CI.CS.out.vEgo = 50.
-    for speed, maximum in ((0., 350), (9., 350), (13., 350), (13.1, 348), (13.4, 342),
-                           (14., 330), (15., 310), (16., 290), (16.9, 272), (17., 270), (30., 270)):
+    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 406), (13.4, 395),
+                           (14., 374), (15., 340), (16., 305), (16.9, 273), (17., 270), (30., 270)):
       for request in (-1., -0.5, 0.5, 1.):
         with self.subTest(speed=speed, request=request):
           self.CI.CS.out.vEgoRaw = speed
@@ -46,7 +46,7 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
           self.assertAlmostEqual(actuators.torque, expected / maximum, places=6)
 
   def test_driver_torque_limit_uses_dynamic_maximum(self):
-    for speed, maximum in ((13., 350), (15., 310), (17., 270)):
+    for speed, maximum in ((13., 409), (15., 340), (17., 270)):
       for sign in (-1, 1):
         self.CI.CS.out.vEgoRaw = speed
         self.CI.CS.out.steeringTorque = -sign * 260
@@ -67,21 +67,21 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
           assert abs(current - previous) <= 2
         else:
           assert abs(current - previous) <= 3
-      assert current == request * 350
+      assert current == request * 409
 
     self.CC.latActive = False
     assert self.update().torqueOutputCan == 0
     assert self.parser.vl["LFA"]["ActToiSta"] == 0
 
   def test_speed_transition(self):
-    self.CI.CC.apply_torque_last = 350
+    self.CI.CC.apply_torque_last = 409
     for step in range(401):
       self.CI.CS.out.vEgoRaw = 13. + step / 100
       previous = self.CI.CC.apply_torque_last
       actuators = self.update()
       assert 0 <= previous - actuators.torqueOutputCan <= 3
-      if step % 10 == 0:
-        assert actuators.torqueOutputCan == 350 - step // 5
+      if step % 100 == 0:
+        assert actuators.torqueOutputCan == {0: 409, 100: 374, 200: 340, 300: 305, 400: 270}[step]
     assert actuators.torqueOutputCan == 270
 
   def test_high_angle_fault_avoidance(self):
