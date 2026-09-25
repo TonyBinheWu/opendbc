@@ -168,6 +168,9 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     hyundai_canfd_rate_rt_active = true;
   } else if ((rt_delta_abs + rate_down) <= 112) {
     hyundai_canfd_rate_rt_active = false;
+  } else {
+    // Retain the larger window until the previous torque reference catches up.
+    hyundai_canfd_rate_rt_active = true;
   }
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
   const int max_torque = hyundai_canfd_dynamic_torque ?
