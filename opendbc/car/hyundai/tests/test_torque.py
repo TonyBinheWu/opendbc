@@ -64,14 +64,27 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
         actuators = self.update()
         current = actuators.torqueOutputCan
         if current * previous >= 0 and abs(current) > abs(previous):
-          assert abs(current - previous) <= 2
+          assert abs(current - previous) <= 4
         else:
-          assert abs(current - previous) <= 3
+          assert abs(current - previous) <= 6
       assert current == request * 409
 
     self.CC.latActive = False
     assert self.update().torqueOutputCan == 0
     assert self.parser.vl["LFA"]["ActToiSta"] == 0
+
+  def test_opt_in_rate_curve(self):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 4, 5),
+                                      (15., 3, 5), (16., 3, 4), (17., 2, 3), (30., 2, 3)):
+      with self.subTest(speed=speed):
+        self.CI.CS.out.vEgoRaw = speed
+        self.CI.CS.out.steeringTorque = 0
+        self.CC.actuators.torque = 1.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 + rate_up
+        self.CC.actuators.torque = 0.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 - rate_down
 
   def test_speed_transition(self):
     self.CI.CC.apply_torque_last = 409

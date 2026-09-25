@@ -311,6 +311,9 @@ class TestHyundaiCanfdLFASteeringLongAltButtons(TestHyundaiCanfdLFASteeringLongB
 
 class HyundaiCanfdDynamicTorqueBase:
   MAX_TORQUE_LOOKUP = [9., 13., 17.], [409, 409, 270]
+  MAX_RATE_UP = 4
+  MAX_RATE_DOWN = 6
+  MAX_RT_DELTA = 162
   DYNAMIC_MAX_TORQUE = True
   STANDSTILL_THRESHOLD = 12 * 0.03125 / 3.6
   GAS_MSG = ("ACCELERATOR", "ACCELERATOR_PEDAL")
@@ -329,6 +332,30 @@ class HyundaiCanfdDynamicTorqueBase:
   def _get_max_torque(self, speed):
     # Cap the generic speed/rounding tolerance at the nominal CAN-FD curve.
     return round(float(np.interp(speed, self.MAX_TORQUE_LOOKUP[0], self.MAX_TORQUE_LOOKUP[1])))
+
+  def test_opt_in_rate_curve(self):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 4, 5),
+                                      (15., 3, 5), (16., 3, 4), (17., 2, 3), (30., 2, 3)):
+      self._reset_speed_measurement(speed)
+      for previous, requested, allowed in ((100, 100 + rate_up, True),
+                                           (100, 101 + rate_up, False),
+                                           (100, 100 - rate_down, True),
+                                           (100, 99 - rate_down, False),
+                                           (-100, -100 - rate_up, True),
+                                           (-100, -101 - rate_up, False)):
+        self.safety.set_controls_allowed(True)
+        self._set_prev_torque(previous)
+        assert self._tx(self._torque_cmd_msg(requested)) == allowed, (speed, previous, requested)
+
+  def test_wind_down_after_rate_transition(self):
+    self._reset_speed_measurement(13.)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(270)
+    for torque in range(264, 125, -6):
+      assert self._tx(self._torque_cmd_msg(torque)), torque
+    self._reset_speed_measurement(17.)
+    assert self._tx(self._torque_cmd_msg(123))
+    assert not self._tx(self._torque_cmd_msg(119))
 
   def test_dynamic_torque_boundaries(self):
     for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 406), (13.4, 395),
@@ -351,6 +378,14 @@ class HyundaiCanfdDynamicTorqueBase:
         self._set_prev_torque(torque)
         assert self._tx(self._torque_cmd_msg(torque)) == (abs(torque) <= 270)
 
+    # Without the opt-in flag the 2/3 steering rates must remain unchanged.
+    self._reset_speed_measurement(0.)
+    for previous, requested, allowed in ((100, 102, True), (100, 103, False),
+                                         (100, 97, True), (100, 96, False)):
+      self.safety.set_controls_allowed(True)
+      self._set_prev_torque(previous)
+      assert self._tx(self._torque_cmd_msg(requested)) == allowed
+
   def test_dynamic_torque_with_mads(self):
     # sunnypilot can allow lateral control while ACC is disengaged. The same
     # speed-dependent ceiling must still be enforced in that state.
@@ -366,6 +401,25 @@ class HyundaiCanfdDynamicTorqueBase:
       self.safety.set_controls_allowed_lateral(False)
       self._set_prev_torque(1)
       assert not self._tx(self._torque_cmd_msg(1))
+
+  def test_dynamic_rate_wheel_speed_quantization(self):
+    # Match controller Float32 speed and Panda's rounded wheel-speed samples
+    # around each integer-rate transition without accepting one unit too much.
+    for transition in (14., 15., 16.):
+      raw_center = round(transition * 3.6 / 0.03125 * 4)
+      for raw_sum in range(raw_center - 32, raw_center + 33):
+        counts = [raw_sum // 4 + (i < raw_sum % 4) for i in range(4)]
+        values = {f"WHL_Spd{pos}Val": count * 0.03125 for pos, count in zip(("FL", "FR", "RL", "RR"), counts, strict=True)}
+        for _ in range(common.MAX_SAMPLE_VALS):
+          self._rx(self.packer.make_can_msg_safety("WHEEL_SPEEDS", self.PT_BUS, values))
+        speed = float(np.float32(sum(values.values()) / 4 / 3.6))
+        curve_speed = float(np.ceil(speed * 1000.)) / 1000.
+        up = int(float(np.interp(curve_speed, [13., 17.], [4, 2])) + 0.5)
+        down = int(float(np.interp(curve_speed, [13., 17.], [6, 3])) + 0.5)
+        for previous, requested in ((100, 100 + up), (100, 100 - down)):
+          self.safety.set_controls_allowed(True)
+          self._set_prev_torque(previous)
+          assert self._tx(self._torque_cmd_msg(requested)), (speed, previous, requested)
 
   def test_dynamic_torque_wheel_speed_quantization(self):
     # Four independently quantized wheels can average to quarter-count speeds.
