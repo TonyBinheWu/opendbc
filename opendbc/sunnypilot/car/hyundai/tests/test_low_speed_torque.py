@@ -36,7 +36,8 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               limits = vars(CarControllerParams(CP))
               self.assertEqual(limits["STEER_MAX"], 409)
               self.assertEqual(limits["STEER_MAX_LOOKUP"], ([9., 13., 17.], [409, 409, 270]))
-              self.assertEqual({k: v for k, v in limits.items() if k not in ("STEER_MAX", "STEER_MAX_LOOKUP", "STEER_DELTA_UP_LOOKUP", "STEER_DELTA_DOWN_LOOKUP")},
+              excluded = ("STEER_MAX", "STEER_MAX_LOOKUP", "STEER_DELTA_UP_LOOKUP", "STEER_DELTA_DOWN_LOOKUP")
+              self.assertEqual({k: v for k, v in limits.items() if k not in excluded},
                                {k: v for k, v in stock_limits.items() if k != "STEER_MAX"})
             else:
               self.assertEqual(CP.to_dict(), stock)

@@ -376,10 +376,9 @@ class HyundaiCanfdDynamicTorqueBase:
         self._reset_torque_driver_measurement(-max_driver_torque * sign)
         self.assertFalse(self._tx(self._torque_cmd_msg((max_torque - int(np.interp(speed, [13., 17.], [6., 3.]) + 0.5) + 1) * sign)))
 
-
   def test_opt_in_rate_curve(self):
     for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 3, 5),
-                                      (15., 3, 4), (16., 2, 4), (17., 2, 3), (30., 2, 3)):
+                                      (15., 3, 4), (16., 3, 4), (16.02, 2, 4), (17., 2, 3), (30., 2, 3)):
       self._reset_speed_measurement(speed)
       for previous, requested, allowed in ((100, 100 + rate_up, True),
                                            (100, 101 + rate_up, False),
