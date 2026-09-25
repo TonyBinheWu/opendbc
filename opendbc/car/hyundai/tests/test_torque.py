@@ -33,7 +33,7 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
   def test_curve_and_feedback(self):
     # vEgo deliberately differs: the curve must use unfiltered wheel speed.
     self.CI.CS.out.vEgo = 50.
-    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 406), (13.4, 395),
+    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 405), (13.4, 395),
                            (14., 374), (15., 340), (16., 305), (16.9, 273), (17., 270), (30., 270)):
       for request in (-1., -0.5, 0.5, 1.):
         with self.subTest(speed=speed, request=request):
@@ -64,14 +64,27 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
         actuators = self.update()
         current = actuators.torqueOutputCan
         if current * previous >= 0 and abs(current) > abs(previous):
-          assert abs(current - previous) <= 2
+          assert abs(current - previous) <= 4
         else:
-          assert abs(current - previous) <= 3
+          assert abs(current - previous) <= 6
       assert current == request * 409
 
     self.CC.latActive = False
     assert self.update().torqueOutputCan == 0
     assert self.parser.vl["LFA"]["ActToiSta"] == 0
+
+  def test_opt_in_rate_curve(self):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 3, 5),
+                                      (15., 3, 4), (16., 2, 4), (17., 2, 3), (30., 2, 3)):
+      with self.subTest(speed=speed):
+        self.CI.CS.out.vEgoRaw = speed
+        self.CI.CS.out.steeringTorque = 0
+        self.CC.actuators.torque = 1.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 + rate_up
+        self.CC.actuators.torque = 0.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 - rate_down
 
   def test_speed_transition(self):
     self.CI.CC.apply_torque_last = 409

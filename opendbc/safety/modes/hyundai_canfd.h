@@ -48,6 +48,7 @@
 static bool hyundai_canfd_alt_buttons = false;
 static bool hyundai_canfd_lka_steer_msg_alt = false;
 static bool hyundai_canfd_dynamic_torque = false;
+static bool hyundai_canfd_rate_rt_active = false;
 
 static unsigned int hyundai_canfd_get_lka_addr(void) {
   return hyundai_canfd_lka_steer_msg_alt ? 0x110U : 0x50U;
@@ -146,6 +147,29 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     {9., 13., 17.},
     {409., 409., 270.},
   };
+  // With low-speed torque enabled, taper steering rate from 4/6 at 13 m/s
+  // to the stock 2/3 at 17 m/s. Safety decides independently of the controller.
+  const struct lookup_t HYUNDAI_CANFD_RATE_UP_LOOKUP = {
+    {13., 17., 17.},
+    {4., 2., 2.},
+  };
+  const struct lookup_t HYUNDAI_CANFD_RATE_DOWN_LOOKUP = {
+    {13., 17., 17.},
+    {6., 3., 3.},
+  };
+  const float rate_speed = vehicle_speed.min / VEHICLE_SPEED_FACTOR;
+  const int rate_up = hyundai_canfd_dynamic_torque ? ROUND(safety_interpolate(HYUNDAI_CANFD_RATE_UP_LOOKUP, rate_speed)) : 2;
+  const int rate_down = hyundai_canfd_dynamic_torque ? ROUND(safety_interpolate(HYUNDAI_CANFD_RATE_DOWN_LOOKUP, rate_speed)) : 3;
+  const int rt_delta = desired_torque_last - rt_torque_last;
+  const int rt_delta_abs = (rt_delta >= 0) ? rt_delta : -rt_delta;
+  // A full 250 ms window can span 27 frames. Preserve the larger window
+  // while the previous reference is still catching up after a rate transition.
+  if (hyundai_canfd_dynamic_torque && ((rate_down > 4) || (hyundai_canfd_rate_rt_active && ((rt_delta_abs + rate_down) > 112)))) {
+    // Retain the larger window until the previous torque reference catches up.
+    hyundai_canfd_rate_rt_active = true;
+  } else {
+    hyundai_canfd_rate_rt_active = false;
+  }
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
   const int max_torque = hyundai_canfd_dynamic_torque ?
     ROUND(safety_interpolate(HYUNDAI_CANFD_MAX_TORQUE_LOOKUP, vehicle_speed.min / VEHICLE_SPEED_FACTOR)) : 270;
@@ -153,9 +177,9 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
     .max_torque = max_torque,
     .dynamic_max_torque = hyundai_canfd_dynamic_torque,
     .max_torque_lookup = HYUNDAI_CANFD_MAX_TORQUE_LOOKUP,
-    .max_rt_delta = 112,
-    .max_rate_up = 2,
-    .max_rate_down = 3,
+    .max_rt_delta = hyundai_canfd_rate_rt_active ? 162 : 112,
+    .max_rate_up = rate_up,
+    .max_rate_down = rate_down,
     .driver_torque_allowance = 250,
     .driver_torque_multiplier = 2,
     .type = TorqueDriverLimited,
@@ -288,6 +312,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
   hyundai_canfd_alt_buttons = GET_FLAG(param, HYUNDAI_PARAM_CANFD_ALT_BUTTONS);
   hyundai_canfd_lka_steer_msg_alt = GET_FLAG(param, HYUNDAI_PARAM_CANFD_LKA_STEER_MSG_ALT);
   hyundai_canfd_dynamic_torque = GET_FLAG(param, HYUNDAI_PARAM_CANFD_DYNAMIC_TORQUE);
+  hyundai_canfd_rate_rt_active = false;
 
   safety_config ret;
   if (hyundai_longitudinal) {
