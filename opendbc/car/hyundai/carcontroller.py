@@ -91,8 +91,10 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
       # wheel speed and Panda's independently quantized speed can differ slightly.
       rate_speed = float(np.ceil(max(0., CS.out.vEgoRaw) * 1000.)) / 1000.
       steer_max = int(float(np.interp(rate_speed, *self.params.STEER_MAX_LOOKUP)) + 0.5)
-      self.params.STEER_DELTA_UP = int(float(np.interp(rate_speed, *self.params.STEER_DELTA_UP_LOOKUP)) + 0.5)
-      self.params.STEER_DELTA_DOWN = int(float(np.interp(rate_speed, *self.params.STEER_DELTA_DOWN_LOOKUP)) + 0.5)
+      # Allow for one CAN wheel-speed count at rate-rounding breakpoints.
+      conservative_rate_speed = float(np.ceil((max(0., CS.out.vEgoRaw) + 0.01) * 1000.)) / 1000.
+      self.params.STEER_DELTA_UP = int(float(np.interp(conservative_rate_speed, *self.params.STEER_DELTA_UP_LOOKUP)) + 0.5)
+      self.params.STEER_DELTA_DOWN = int(float(np.interp(conservative_rate_speed, *self.params.STEER_DELTA_DOWN_LOOKUP)) + 0.5)
     new_torque = int(round(actuators.torque * steer_max))
     apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.params, steer_max)
 

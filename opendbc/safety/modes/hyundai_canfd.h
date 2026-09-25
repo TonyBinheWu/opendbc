@@ -164,13 +164,11 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
   const int rt_delta_abs = (rt_delta >= 0) ? rt_delta : -rt_delta;
   // A full 250 ms window can span 27 frames. Preserve the larger window
   // while the previous reference is still catching up after a rate transition.
-  if (hyundai_canfd_dynamic_torque && (rate_down > 4)) {
-    hyundai_canfd_rate_rt_active = true;
-  } else if ((rt_delta_abs + rate_down) <= 112) {
-    hyundai_canfd_rate_rt_active = false;
-  } else {
+  if (hyundai_canfd_dynamic_torque && ((rate_down > 4) || (hyundai_canfd_rate_rt_active && ((rt_delta_abs + rate_down) > 112)))) {
     // Retain the larger window until the previous torque reference catches up.
     hyundai_canfd_rate_rt_active = true;
+  } else {
+    hyundai_canfd_rate_rt_active = false;
   }
   // Cap the generic dynamic-limit tolerance at the nominal curve, including 270 at high speed.
   const int max_torque = hyundai_canfd_dynamic_torque ?

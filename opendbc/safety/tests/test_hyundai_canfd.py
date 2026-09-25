@@ -378,8 +378,8 @@ class HyundaiCanfdDynamicTorqueBase:
 
 
   def test_opt_in_rate_curve(self):
-    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 4, 5),
-                                      (15., 3, 5), (16., 3, 4), (17., 2, 3), (30., 2, 3)):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 3, 5),
+                                      (15., 3, 4), (16., 2, 4), (17., 2, 3), (30., 2, 3)):
       self._reset_speed_measurement(speed)
       for previous, requested, allowed in ((100, 100 + rate_up, True),
                                            (100, 101 + rate_up, False),

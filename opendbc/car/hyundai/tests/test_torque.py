@@ -33,7 +33,7 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
   def test_curve_and_feedback(self):
     # vEgo deliberately differs: the curve must use unfiltered wheel speed.
     self.CI.CS.out.vEgo = 50.
-    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 406), (13.4, 395),
+    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 405), (13.4, 395),
                            (14., 374), (15., 340), (16., 305), (16.9, 273), (17., 270), (30., 270)):
       for request in (-1., -0.5, 0.5, 1.):
         with self.subTest(speed=speed, request=request):
@@ -74,8 +74,8 @@ class TestHyundaiCanfdTorque(unittest.TestCase):
     assert self.parser.vl["LFA"]["ActToiSta"] == 0
 
   def test_opt_in_rate_curve(self):
-    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 4, 5),
-                                      (15., 3, 5), (16., 3, 4), (17., 2, 3), (30., 2, 3)):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 3, 5),
+                                      (15., 3, 4), (16., 2, 4), (17., 2, 3), (30., 2, 3)):
       with self.subTest(speed=speed):
         self.CI.CS.out.vEgoRaw = speed
         self.CI.CS.out.steeringTorque = 0
