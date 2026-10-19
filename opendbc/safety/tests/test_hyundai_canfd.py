@@ -25,6 +25,54 @@ ALL_GAS_EV_HYBRID_COMBOS = [
 CAMERA_SCC_COMBOS = ALL_GAS_EV_HYBRID_COMBOS[3:]
 
 
+class TestHyundaiCanfdFlagIsolation(unittest.TestCase):
+  def test_ccnc_dynamic_torque_independence(self):
+    packer = CANPackerSafety("hyundai_canfd_generated")
+    safety = libsafety_py.libsafety
+    for ccnc in (False, True):
+      for longitudinal in (False, True):
+        # Reinitialize in both directions to catch stale opt-in state.
+        for dynamic in (False, True, False, True):
+          with self.subTest(ccnc=ccnc, longitudinal=longitudinal, dynamic=dynamic):
+            param = HyundaiSafetyFlags.CAMERA_SCC | HyundaiSafetyFlags.EV_GAS
+            if ccnc:
+              param |= HyundaiSafetyFlags.CCNC
+            if longitudinal:
+              param |= HyundaiSafetyFlags.LONG
+            if dynamic:
+              param |= HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE
+            self.assertEqual(safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, param), 0)
+            safety.init_tests()
+
+            # Routing depends only on CCNC, even when torque is enabled/cleared.
+            for msg, bus in (("CCNC_0x161", 0), ("CCNC_0x162", 0), ("MDPS", 2)):
+              self.assertEqual(safety.safety_tx_hook(packer.make_can_msg_safety(msg, bus, {})), ccnc)
+            self.assertEqual(safety.safety_tx_hook(common.make_msg(2, 0x7C4)), ccnc)
+
+            # At zero speed the limits depend only on the explicit torque opt-in.
+            maximum = 409 if dynamic else 270
+            rate_up = 4 if dynamic else 2
+            rate_down = 6 if dynamic else 3
+            for sign in (-1, 1):
+              for previous, requested, allowed in ((maximum, maximum, True), (maximum + 1, maximum + 1, False),
+                                                   (100, 100 + rate_up, True), (100, 101 + rate_up, False)):
+                safety.set_controls_allowed(True)
+                safety.set_torque_driver(0, 0)
+                safety.set_desired_torque_last(sign * previous)
+                safety.set_rt_torque_last(sign * previous)
+                msg = packer.make_can_msg_safety("LFA", 0, {"StrTqReqVal": sign * requested, "ActToiSta": 1})
+                self.assertEqual(safety.safety_tx_hook(msg), allowed)
+
+              # Driver override still requires the configured minimum wind-down.
+              for delta, allowed in ((rate_down, True), (rate_down - 1, False)):
+                safety.set_controls_allowed(True)
+                safety.set_torque_driver(-sign * 1000, -sign * 1000)
+                safety.set_desired_torque_last(sign * maximum)
+                safety.set_rt_torque_last(sign * maximum)
+                msg = packer.make_can_msg_safety("LFA", 0, {"StrTqReqVal": sign * (maximum - delta), "ActToiSta": 1})
+                self.assertEqual(safety.safety_tx_hook(msg), allowed)
+
+
 class TestHyundaiCanfdBase(HyundaiButtonBase, common.CarSafetyTest, common.DriverTorqueSteeringSafetyTest, common.SteerRequestCutSafetyTest):
 
   TX_MSGS = [[0x50, 0], [0x1CF, 1], [0x2A4, 0]]

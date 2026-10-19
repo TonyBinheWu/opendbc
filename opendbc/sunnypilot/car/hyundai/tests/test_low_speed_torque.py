@@ -101,6 +101,8 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
           result = (model, fingerprint, "0" * 17, [], CarParams.FingerprintSource.can, True)
           with patch("opendbc.car.car_helpers.fingerprint", return_value=result):
             CI = get_car(None, None, None, False, False, init_params_list_sp=[{"HkgLowSpeedTorque": enabled}])
+          # Populate the copied camera messages before applying CCNC controls.
+          CI.update([])
           self.assertEqual(CI.CC.params.STEER_MAX, 409 if enabled else 270)
           parser = CANParser("hyundai_canfd_generated", [("LFA", 100)], CI.CC.CAN.ECAN)
           CC, CC_SP = CarControl(enabled=True, latActive=True), CarControlSP()

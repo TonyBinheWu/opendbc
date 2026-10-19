@@ -12,9 +12,6 @@ from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
 Ecu = CarParams.Ecu
 
-  # Set at initialization only when the HKG low-speed torque setting is enabled.
-  CANFD_DYNAMIC_TORQUE = 2 ** 27
-
 
 class CarControllerParams:
   ACCEL_MIN = -3.5 # m/s^2
@@ -78,8 +75,8 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_LKA_STEER_MSG_ALT = 128
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
-  CANFD_DYNAMIC_TORQUE = 1024
   CCNC = 1024
+  CANFD_DYNAMIC_TORQUE = 2048
 
 
 # Hyundai/Kia/Genesis SCC (Smart Cruise Control) and steering architecture:
@@ -162,6 +159,9 @@ class HyundaiFlags(IntFlag):
   ALT_LIMITS_2 = 2 ** 26
 
   CCNC = 2 ** 27
+
+  # Set at initialization only when the HKG low-speed torque setting is enabled.
+  CANFD_DYNAMIC_TORQUE = 2 ** 28
 
 
 @dataclass

@@ -56,6 +56,22 @@ def cars_with(flags):
   return {c for c in CAR if c.config.flags & flags}
 
 
+class TestHyundaiFlags(unittest.TestCase):
+  def test_unique_bits(self):
+    for flags in (HyundaiFlags, HyundaiSafetyFlags):
+      with self.subTest(flags=flags):
+        # IntFlag iteration omits aliases, so inspect every declared member.
+        values = [int(value) for value in flags.__members__.values()]
+        self.assertEqual(len(values), len(set(values)))
+        self.assertTrue(all(value > 0 and value & (value - 1) == 0 for value in values))
+
+  def test_ccnc_dynamic_torque_bits(self):
+    self.assertEqual(HyundaiFlags.CCNC, 2 ** 27)
+    self.assertEqual(HyundaiFlags.CANFD_DYNAMIC_TORQUE, 2 ** 28)
+    self.assertEqual(HyundaiSafetyFlags.CCNC, 1024)
+    self.assertEqual(HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE, 2048)
+
+
 class TestHyundaiFingerprint(unittest.TestCase):
   def test_feature_detection(self):
     # LKA steering
