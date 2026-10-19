@@ -12,6 +12,9 @@ from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 
 Ecu = CarParams.Ecu
 
+  # Set at initialization only when the HKG low-speed torque setting is enabled.
+  CANFD_DYNAMIC_TORQUE = 2 ** 27
+
 
 class CarControllerParams:
   ACCEL_MIN = -3.5 # m/s^2
@@ -33,6 +36,13 @@ class CarControllerParams:
       self.STEER_THRESHOLD = 250
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
+
+      if CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE:
+        self.STEER_MAX = 409
+        self.STEER_MAX_LOOKUP = ([9., 13., 17.], [409, 409, 270])
+        # Opt-in rate envelope: 4/6 through 13 m/s, taper to 2/3 at 17 m/s.
+        self.STEER_DELTA_UP_LOOKUP = ([13., 17.], [4, 2])
+        self.STEER_DELTA_DOWN_LOOKUP = ([13., 17.], [6, 3])
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -68,6 +78,7 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_LKA_STEER_MSG_ALT = 128
   FCEV_GAS = 256
   ALT_LIMITS_2 = 512
+  CANFD_DYNAMIC_TORQUE = 1024
   CCNC = 1024
 
 

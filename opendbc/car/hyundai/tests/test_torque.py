@@ -1,0 +1,104 @@
+import unittest
+
+from opendbc.can import CANParser
+from opendbc.car import gen_empty_fingerprint
+from opendbc.car.structs import CarControl, CarControlSP
+from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.hyundai.values import CAR
+from opendbc.sunnypilot.car.interfaces import setup_interfaces
+from opendbc.testing import parameterized_class
+
+
+@parameterized_class([{"CAR_MODEL": c} for c in (CAR.KIA_EV6, CAR.HYUNDAI_IONIQ_5, CAR.GENESIS_GV60_EV_1ST_GEN)])
+class TestHyundaiCanfdTorque(unittest.TestCase):
+  CAR_MODEL = CAR.KIA_EV6
+
+  def setUp(self):
+    CP = CarInterface.get_params(self.CAR_MODEL, gen_empty_fingerprint(), [], False, False, False)
+    CP_SP = CarInterface.get_params_sp(CP, self.CAR_MODEL, gen_empty_fingerprint(), [], False, False, False)
+    setup_interfaces(CarInterface, CP, CP_SP, [{"HkgLowSpeedTorque": "1"}])
+    self.CI = CarInterface(CP, CP_SP)
+    self.CC = CarControl(enabled=True, latActive=True)
+    self.CC_SP = CarControlSP()
+    self.CC.actuators.torque = 1.
+    self.parser = CANParser("hyundai_canfd_generated", [("LFA", 100)], 0)
+
+  def update(self):
+    timestamp = self.CI.CC.frame * 10_000_000
+    actuators, msgs = self.CI.apply(self.CC.as_reader(), self.CC_SP, timestamp)
+    self.parser.update([timestamp, msgs])
+    assert self.parser.vl["LFA"]["StrTqReqVal"] == actuators.torqueOutputCan
+    return actuators
+
+  def test_curve_and_feedback(self):
+    # vEgo deliberately differs: the curve must use unfiltered wheel speed.
+    self.CI.CS.out.vEgo = 50.
+    for speed, maximum in ((0., 409), (9., 409), (13., 409), (13.1, 405), (13.4, 395),
+                           (14., 374), (15., 340), (16., 305), (16.9, 273), (17., 270), (30., 270)):
+      for request in (-1., -0.5, 0.5, 1.):
+        with self.subTest(speed=speed, request=request):
+          self.CI.CS.out.vEgoRaw = speed
+          self.CC.actuators.torque = request
+          expected = round(request * maximum)
+          self.CI.CC.apply_torque_last = expected
+          actuators = self.update()
+          assert actuators.torqueOutputCan == expected
+          self.assertAlmostEqual(actuators.torque, expected / maximum, places=6)
+
+  def test_driver_torque_limit_uses_dynamic_maximum(self):
+    for speed, maximum in ((13., 409), (15., 340), (17., 270)):
+      for sign in (-1, 1):
+        self.CI.CS.out.vEgoRaw = speed
+        self.CI.CS.out.steeringTorque = -sign * 260
+        self.CC.actuators.torque = sign
+        self.CI.CC.apply_torque_last = sign * maximum
+        for _ in range(10):
+          actuators = self.update()
+        assert actuators.torqueOutputCan == sign * (maximum - 20)
+
+  def test_rates_and_disengagement(self):
+    for request in (1., -1.):
+      self.CC.actuators.torque = request
+      for _ in range(400):
+        previous = self.CI.CC.apply_torque_last
+        actuators = self.update()
+        current = actuators.torqueOutputCan
+        if current * previous >= 0 and abs(current) > abs(previous):
+          assert abs(current - previous) <= 4
+        else:
+          assert abs(current - previous) <= 6
+      assert current == request * 409
+
+    self.CC.latActive = False
+    assert self.update().torqueOutputCan == 0
+    assert self.parser.vl["LFA"]["ActToiSta"] == 0
+
+  def test_opt_in_rate_curve(self):
+    for speed, rate_up, rate_down in ((0., 4, 6), (13., 4, 6), (14., 3, 5),
+                                      (15., 3, 4), (16., 2, 4), (17., 2, 3), (30., 2, 3)):
+      with self.subTest(speed=speed):
+        self.CI.CS.out.vEgoRaw = speed
+        self.CI.CS.out.steeringTorque = 0
+        self.CC.actuators.torque = 1.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 + rate_up
+        self.CC.actuators.torque = 0.
+        self.CI.CC.apply_torque_last = 100
+        assert self.update().torqueOutputCan == 100 - rate_down
+
+  def test_speed_transition(self):
+    self.CI.CC.apply_torque_last = 409
+    for step in range(401):
+      self.CI.CS.out.vEgoRaw = 13. + step / 100
+      previous = self.CI.CC.apply_torque_last
+      actuators = self.update()
+      assert 0 <= previous - actuators.torqueOutputCan <= 3
+      if step % 100 == 0:
+        assert actuators.torqueOutputCan == {0: 409, 100: 374, 200: 340, 300: 305, 400: 270}[step]
+    assert actuators.torqueOutputCan == 270
+
+  def test_high_angle_fault_avoidance(self):
+    self.CI.CS.out.steeringAngleDeg = 85.
+    for frame in range(92):
+      self.update()
+      assert self.parser.vl["LFA"]["ActToiSta"] == (frame not in (89, 90))
