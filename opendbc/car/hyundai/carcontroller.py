@@ -1,6 +1,7 @@
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, make_tester_present_msg, structs
+from opendbc.car.carlog import carlog
 from opendbc.car.lateral import apply_driver_steer_torque_limits, common_fault_avoidance
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
@@ -67,6 +68,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.angle_limit_counter = 0
+    self._sorento_high_angle_cut_logged = False
+    self._ccnc_fca_status_last = None
 
     self.accel_last = 0
     self.apply_torque_last = 0
@@ -102,6 +105,19 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     self.angle_limit_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringAngleDeg) >= MAX_ANGLE, CC.latActive,
                                                                        self.angle_limit_counter, MAX_ANGLE_FRAMES,
                                                                        MAX_ANGLE_CONSECUTIVE_FRAMES)
+
+    # Diagnostic only: the EPS over-angle request cut is a protective behavior,
+    # independent from the HKG dynamic torque/rate limits. Never bypass it.
+    if self.CP.carFingerprint == CAR.KIA_SORENTO_2024:
+      if not CC.latActive or abs(CS.out.steeringAngleDeg) < MAX_ANGLE:
+        self._sorento_high_angle_cut_logged = False
+      elif not apply_steer_req and not self._sorento_high_angle_cut_logged:
+        carlog.warning(f"Sorento ccNC EPS angle protection: steer request cut at "
+                       f"angle={CS.out.steeringAngleDeg:.1f} deg, "
+                       f"vEgo={CS.out.vEgoRaw:.2f} m/s, "
+                       f"torque_limit={steer_max}, "
+                       f"dynamic={bool(self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)}")
+        self._sorento_high_angle_cut_logged = True
 
     if not CC.latActive:
       apply_torque = 0
@@ -211,6 +227,16 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG
     lka_steering_long = lka_steering and self.CP.openpilotLongitudinalControl
     ccnc_non_hda2 = self.CP.flags & HyundaiFlags.CCNC and not lka_steering
+
+    # Passive audit of OEM FCA indicators copied from the camera. ccNC uses
+    # 0x161/0x162, not legacy ADRV_0x160. Do not synthesize failure states.
+    if ccnc_non_hda2 and self.frame % 5 == 0:
+      fca_state = (CS.msg_161.get("FCA_ICON"), CS.msg_161.get("FCA_ALT_ICON"), CS.msg_162.get("FAULT_FCA"))
+      if fca_state != self._ccnc_fca_status_last:
+        carlog.info(f"ccNC OEM FCA display input changed: FCA_ICON={fca_state[0]}, "
+                    f"FCA_ALT_ICON={fca_state[1]}, FAULT_FCA={fca_state[2]}, "
+                    f"op_long={bool(self.CP.openpilotLongitudinalControl)}")
+        self._ccnc_fca_status_last = fca_state
 
     # steering control
     can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled, apply_steer_req, apply_torque, self.lkas_icon))

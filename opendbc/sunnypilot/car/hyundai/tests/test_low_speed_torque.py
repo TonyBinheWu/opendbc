@@ -43,6 +43,25 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               self.assertEqual(CP.to_dict(), stock)
               self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
 
+  def test_eps_angle_request_protection_is_not_disabled_by_hkg_torque(self):
+    """409 torque opt-in does not remove the Hyundai CAN-FD EPS fault workaround."""
+    from opendbc.car.lateral import common_fault_avoidance
+    from opendbc.car.hyundai.carcontroller import MAX_ANGLE, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES
+
+    self.assertEqual(MAX_ANGLE, 85)
+    self.assertEqual(MAX_ANGLE_FRAMES, 89)
+    self.assertEqual(MAX_ANGLE_CONSECUTIVE_FRAMES, 2)
+    counter = 0
+    cut_frames = []
+    for frame in range(MAX_ANGLE_FRAMES + MAX_ANGLE_CONSECUTIVE_FRAMES):
+      counter, request = common_fault_avoidance(True, True, counter, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES)
+      if not request:
+        cut_frames.append(frame)
+    self.assertEqual(cut_frames, [89, 90])
+    counter, request = common_fault_avoidance(False, True, counter, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES)
+    self.assertTrue(request)
+    self.assertEqual(counter, 0)
+
   def test_sorento_ccnc_availability(self):
     """Sorento 2024 ccNC uses the same opt-in torque envelope without altering CCNC safety routing."""
     cases = (
