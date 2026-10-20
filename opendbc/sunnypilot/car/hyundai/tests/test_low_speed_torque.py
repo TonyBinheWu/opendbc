@@ -43,6 +43,45 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               self.assertEqual(CP.to_dict(), stock)
               self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
 
+  def test_all_hkg_canfd_families_share_dynamic_torque_profile(self):
+    """Every eligible Hyundai/Kia/Genesis CAN-FD model uses the EV6 profile."""
+    families = set()
+    for model in CANFD_CAR:
+      with self.subTest(model=model):
+        CP = CarInterface.get_params(model, gen_empty_fingerprint(), [], False, False, False)
+        if not supports_low_speed_torque(CP):
+          continue
+        model_name = model.name
+        family = model_name.split("_", 1)[0]
+        self.assertIn(family, ("HYUNDAI", "KIA", "GENESIS"))
+        families.add(family)
+        stock_flags = CP.flags
+        stock_safety = CP.safetyConfigs[-1].safetyParam
+        configure_low_speed_torque(CP, True)
+        self.assertTrue(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
+        self.assertTrue(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+        limits = CarControllerParams(CP)
+        self.assertEqual(limits.STEER_MAX_LOOKUP, ([9., 13., 17.], [409, 409, 270]))
+        self.assertEqual(limits.STEER_DELTA_UP_LOOKUP, ([13., 17.], [4, 2]))
+        self.assertEqual(limits.STEER_DELTA_DOWN_LOOKUP, ([13., 17.], [6, 3]))
+        configure_low_speed_torque(CP, False)
+        self.assertEqual(CP.flags, stock_flags)
+        self.assertEqual(CP.safetyConfigs[-1].safetyParam, stock_safety)
+
+    self.assertEqual(families, {"HYUNDAI", "KIA", "GENESIS"})
+
+  def test_all_traditional_can_hkg_models_remain_excluded(self):
+    """Classic CAN's car-specific 255/384 limits must never opt into CAN-FD limits."""
+    for model in CAR:
+      if model in CANFD_CAR:
+        continue
+      with self.subTest(model=model):
+        CP = CarInterface.get_params(model, gen_empty_fingerprint(), [], False, False, False)
+        prior = CP.to_dict()
+        self.assertFalse(supports_low_speed_torque(CP))
+        configure_low_speed_torque(CP, True)
+        self.assertEqual(CP.to_dict(), prior)
+
   def test_reject_incompatible_configuration(self):
     self.assertFalse(supports_low_speed_torque(None))
     for change in ("angle", "dashcam", "alternate_limits", "alternate_limits_2", "no_canfd", "unknown_platform", "no_safety", "wrong_safety"):
