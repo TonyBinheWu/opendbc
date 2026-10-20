@@ -43,6 +43,46 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               self.assertEqual(CP.to_dict(), stock)
               self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
 
+  def test_sorento_ccnc_availability(self):
+    """Sorento 2024 ccNC uses the same opt-in torque envelope without altering CCNC safety routing."""
+    cases = (
+      (CAR.KIA_SORENTO, False, False),  # traditional CAN
+      (CAR.KIA_SORENTO_4TH_GEN, True, False),
+      (CAR.KIA_SORENTO_HEV_4TH_GEN, True, False),
+      (CAR.KIA_SORENTO_2024, True, True),  # ccNC camera-SCC CAN-FD
+    )
+    for model, eligible, ccnc in cases:
+      with self.subTest(model=model):
+        CP = CarInterface.get_params(model, gen_empty_fingerprint(), [], False, False, False)
+        stock_flags = CP.flags
+        stock_safety = CP.safetyConfigs[-1].safetyParam
+        self.assertEqual(supports_low_speed_torque(CP), eligible)
+        self.assertEqual(bool(stock_flags & HyundaiFlags.CCNC), ccnc)
+        if ccnc:
+          self.assertTrue(stock_safety & HyundaiSafetyFlags.CCNC)
+
+        configure_low_speed_torque(CP, True)
+        self.assertEqual(bool(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE), eligible)
+        self.assertEqual(bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE), eligible)
+        self.assertEqual(bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CCNC), ccnc)
+        if eligible:
+          profile = CarControllerParams(CP)
+          self.assertEqual(profile.STEER_MAX_LOOKUP, ([9., 13., 17.], [409, 409, 270]))
+          self.assertEqual(profile.STEER_DELTA_UP_LOOKUP, ([13., 17.], [4, 2]))
+          self.assertEqual(profile.STEER_DELTA_DOWN_LOOKUP, ([13., 17.], [6, 3]))
+
+        configure_low_speed_torque(CP, False)
+        self.assertEqual(CP.flags, stock_flags)
+        self.assertEqual(CP.safetyConfigs[-1].safetyParam, stock_safety)
+
+  def test_sorento_ccnc_requires_torque_steering(self):
+    CP = CarInterface.get_params(CAR.KIA_SORENTO_2024, gen_empty_fingerprint(), [], False, False, False)
+    CP.steerControlType = CarParams.SteerControlType.angle
+    self.assertFalse(supports_low_speed_torque(CP))
+    configure_low_speed_torque(CP, True)
+    self.assertFalse(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
+    self.assertFalse(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+
   def test_reject_incompatible_configuration(self):
     self.assertFalse(supports_low_speed_torque(None))
     for change in ("angle", "dashcam", "alternate_limits", "alternate_limits_2", "no_canfd", "unknown_platform", "no_safety", "wrong_safety"):
