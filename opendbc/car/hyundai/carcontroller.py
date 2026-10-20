@@ -112,11 +112,9 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
       if not CC.latActive or abs(CS.out.steeringAngleDeg) < MAX_ANGLE:
         self._sorento_high_angle_cut_logged = False
       elif not apply_steer_req and not self._sorento_high_angle_cut_logged:
-        carlog.warning(f"Sorento ccNC EPS angle protection: steer request cut at "
-                       f"angle={CS.out.steeringAngleDeg:.1f} deg, "
-                       f"vEgo={CS.out.vEgoRaw:.2f} m/s, "
-                       f"torque_limit={steer_max}, "
-                       f"dynamic={bool(self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)}")
+        carlog.warning("Sorento ccNC EPS angle protection: request cut; angle=%.1f deg, speed=%.2f m/s, limit=%d, dynamic=%s",
+                       CS.out.steeringAngleDeg, CS.out.vEgoRaw, steer_max,
+                       bool(self.CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE))
         self._sorento_high_angle_cut_logged = True
 
     if not CC.latActive:
@@ -233,9 +231,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     if ccnc_non_hda2 and self.frame % 5 == 0:
       fca_state = (CS.msg_161.get("FCA_ICON"), CS.msg_161.get("FCA_ALT_ICON"), CS.msg_162.get("FAULT_FCA"))
       if fca_state != self._ccnc_fca_status_last:
-        carlog.info(f"ccNC OEM FCA display input changed: FCA_ICON={fca_state[0]}, "
-                    f"FCA_ALT_ICON={fca_state[1]}, FAULT_FCA={fca_state[2]}, "
-                    f"op_long={bool(self.CP.openpilotLongitudinalControl)}")
+        carlog.info("ccNC OEM FCA display input: FCA_ICON=%s, FCA_ALT_ICON=%s, FAULT_FCA=%s, op_long=%s",
+                    *fca_state, bool(self.CP.openpilotLongitudinalControl))
         self._ccnc_fca_status_last = fca_state
 
     # steering control
