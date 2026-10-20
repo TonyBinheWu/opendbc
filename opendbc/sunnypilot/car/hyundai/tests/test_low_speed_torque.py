@@ -112,7 +112,7 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
           continue
         model_name = model.name
         family = model_name.split("_", 1)[0]
-        self.assertIn(family, ("HYUNDAI", "KIA", "GENESIS"))
+        self.assertTrue(family in ("HYUNDAI", "KIA", "GENESIS"))
         families.add(family)
         stock_flags = CP.flags
         stock_safety = CP.safetyConfigs[-1].safetyParam
