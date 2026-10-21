@@ -74,6 +74,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     # No Kia ccNC cluster protocol/asset variant has yet been verified using
     # synchronized OEM camera frames and actual cluster images.
     self.ccnc_protocol_verified = False
+    self._ccnc_missing_frame_logged = False
 
     self.accel_last = 0
     self.apply_torque_last = 0
@@ -251,13 +252,15 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
       if ccnc_non_hda2:
         if CS.msg_161 and CS.msg_162:
+          self._ccnc_missing_frame_logged = False
           can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl,
                                                     CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5,
                                                     CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon,
                                                     display_options=self.ccnc_display_options,
                                                     protocol_verified=self.ccnc_protocol_verified))
-        else:
-          carlog.warning("ccNC instrument frame unavailable; skipped 0x161/0x162 transmit")
+        elif not self._ccnc_missing_frame_logged:
+          carlog.warning("ccNC instrument source unavailable; no fabricated 0x161/0x162 message sent")
+          self._ccnc_missing_frame_logged = True
       else:
         can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
 

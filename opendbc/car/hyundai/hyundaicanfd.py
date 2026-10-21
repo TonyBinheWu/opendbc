@@ -5,6 +5,12 @@ from opendbc.car.crc import CRC16_XMODEM
 from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.sunnypilot.car.hyundai.lead_data_ext import CanFdLeadData
 
+# Intentionally empty until an exact fingerprint, UI payload mapping, and
+# synchronized camera/cluster logs are independently validated.
+# A DBC definition or successful CAN transmission is NOT validation.
+CCNC_VERIFIED_CLUSTER_PLATFORMS = frozenset()
+
+
 
 class CanBus(CanBusBase):
   def __init__(self, CP, fingerprint=None, lka_steering=None) -> None:
