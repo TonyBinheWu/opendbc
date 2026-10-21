@@ -11,7 +11,6 @@ from opendbc.sunnypilot.car.hyundai.lead_data_ext import CanFdLeadData
 CCNC_VERIFIED_CLUSTER_PLATFORMS = frozenset()
 
 
-
 class CanBus(CanBusBase):
   def __init__(self, CP, fingerprint=None, lka_steering=None) -> None:
     super().__init__(CP, fingerprint)
