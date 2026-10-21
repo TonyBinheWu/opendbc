@@ -70,6 +70,10 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     self.angle_limit_counter = 0
     self._sorento_high_angle_cut_logged = False
     self._ccnc_fca_status_last = None
+    self.ccnc_display_options = {}
+    # No Kia ccNC cluster protocol/asset variant has yet been verified using
+    # synchronized OEM camera frames and actual cluster images.
+    self.ccnc_protocol_verified = False
 
     self.accel_last = 0
     self.apply_torque_last = 0
@@ -246,9 +250,14 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     # LFA and HDA icons
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
       if ccnc_non_hda2:
-        can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl, CC.leftBlinker,
-                                                  CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled,
-                                                  self.lfa_icon))
+        if CS.msg_161 and CS.msg_162:
+          can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl,
+                                                    CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5,
+                                                    CS.is_metric, CS.out, CS.main_cruise_enabled, self.lfa_icon,
+                                                    display_options=self.ccnc_display_options,
+                                                    protocol_verified=self.ccnc_protocol_verified))
+        else:
+          carlog.warning("ccNC instrument frame unavailable; skipped 0x161/0x162 transmit")
       else:
         can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
 
