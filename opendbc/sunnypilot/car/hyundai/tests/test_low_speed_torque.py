@@ -43,6 +43,25 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
               self.assertEqual(CP.to_dict(), stock)
               self.assertEqual(vars(CarControllerParams(CP)), stock_limits)
 
+  def test_eps_angle_request_protection_is_not_disabled_by_hkg_torque(self):
+    """409 torque opt-in does not remove the Hyundai CAN-FD EPS fault workaround."""
+    from opendbc.car.lateral import common_fault_avoidance
+    from opendbc.car.hyundai.carcontroller import MAX_ANGLE, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES
+
+    self.assertEqual(MAX_ANGLE, 85)
+    self.assertEqual(MAX_ANGLE_FRAMES, 89)
+    self.assertEqual(MAX_ANGLE_CONSECUTIVE_FRAMES, 2)
+    counter = 0
+    cut_frames = []
+    for frame in range(MAX_ANGLE_FRAMES + MAX_ANGLE_CONSECUTIVE_FRAMES):
+      counter, request = common_fault_avoidance(True, True, counter, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES)
+      if not request:
+        cut_frames.append(frame)
+    self.assertEqual(cut_frames, [89, 90])
+    counter, request = common_fault_avoidance(False, True, counter, MAX_ANGLE_FRAMES, MAX_ANGLE_CONSECUTIVE_FRAMES)
+    self.assertTrue(request)
+    self.assertEqual(counter, 0)
+
   def test_sorento_ccnc_availability(self):
     """Sorento 2024 ccNC uses the same opt-in torque envelope without altering CCNC safety routing."""
     cases = (
@@ -82,6 +101,45 @@ class TestHkgLowSpeedTorque(unittest.TestCase):
     configure_low_speed_torque(CP, True)
     self.assertFalse(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
     self.assertFalse(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+
+  def test_all_hkg_canfd_families_share_dynamic_torque_profile(self):
+    """Every eligible Hyundai/Kia/Genesis CAN-FD model uses the EV6 profile."""
+    families = set()
+    for model in CANFD_CAR:
+      with self.subTest(model=model):
+        CP = CarInterface.get_params(model, gen_empty_fingerprint(), [], False, False, False)
+        if not supports_low_speed_torque(CP):
+          continue
+        model_name = model.name
+        family = model_name.split("_", 1)[0]
+        self.assertTrue(family in ("HYUNDAI", "KIA", "GENESIS"))
+        families.add(family)
+        stock_flags = CP.flags
+        stock_safety = CP.safetyConfigs[-1].safetyParam
+        configure_low_speed_torque(CP, True)
+        self.assertTrue(CP.flags & HyundaiFlags.CANFD_DYNAMIC_TORQUE)
+        self.assertTrue(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+        limits = CarControllerParams(CP)
+        self.assertEqual(limits.STEER_MAX_LOOKUP, ([9., 13., 17.], [409, 409, 270]))
+        self.assertEqual(limits.STEER_DELTA_UP_LOOKUP, ([13., 17.], [4, 2]))
+        self.assertEqual(limits.STEER_DELTA_DOWN_LOOKUP, ([13., 17.], [6, 3]))
+        configure_low_speed_torque(CP, False)
+        self.assertEqual(CP.flags, stock_flags)
+        self.assertEqual(CP.safetyConfigs[-1].safetyParam, stock_safety)
+
+    self.assertEqual(families, {"HYUNDAI", "KIA", "GENESIS"})
+
+  def test_all_traditional_can_hkg_models_remain_excluded(self):
+    """Classic CAN's car-specific 255/384 limits must never opt into CAN-FD limits."""
+    for model in CAR:
+      if model in CANFD_CAR:
+        continue
+      with self.subTest(model=model):
+        CP = CarInterface.get_params(model, gen_empty_fingerprint(), [], False, False, False)
+        prior = CP.to_dict()
+        self.assertFalse(supports_low_speed_torque(CP))
+        configure_low_speed_torque(CP, True)
+        self.assertEqual(CP.to_dict(), prior)
 
   def test_reject_incompatible_configuration(self):
     self.assertFalse(supports_low_speed_torque(None))
