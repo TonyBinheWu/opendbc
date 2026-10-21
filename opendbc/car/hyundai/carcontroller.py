@@ -75,6 +75,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     # synchronized OEM camera frames and actual cluster images.
     self.ccnc_protocol_verified = False
     self._ccnc_missing_frame_logged = False
+    self._ccnc_now_nanos = 0
 
     self.accel_last = 0
     self.apply_torque_last = 0
@@ -83,6 +84,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     self.cancel_counter = 0
 
   def update(self, CC, CC_SP, CS, now_nanos):
+    self._ccnc_now_nanos = now_nanos
     EsccCarController.update(self, CS)
     LeadDataCarController.update(self, CC_SP)
     MadsCarController.update(self, self.CP, CC, CC_SP, self.frame)
@@ -251,7 +253,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     # LFA and HDA icons
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
       if ccnc_non_hda2:
-        if CS.msg_161 and CS.msg_162:
+        if (CS.msg_161 and CS.msg_162 and
+            hyundaicanfd.ccnc_camera_frames_fresh(self._ccnc_now_nanos, CS.ccnc_161_ts, CS.ccnc_162_ts)):
           self._ccnc_missing_frame_logged = False
           can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl,
                                                     CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5,

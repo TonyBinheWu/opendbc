@@ -77,3 +77,14 @@ def test_ccnc_verified_opt_in_only_changes_real_lfa_and_cruise_values():
   for key in ("HDA_ICON", "FCA_ICON", "NAV_ICON", "ALERTS_2"):
     assert sent["CCNC_0x161"][key] == source_161[key]
   assert sent["CCNC_0x162"] == source_162
+
+def test_ccnc_source_freshness_requires_both_live_messages():
+  from opendbc.car.hyundai.hyundaicanfd import ccnc_camera_frames_fresh
+
+  now = 2_000_000_000
+  assert ccnc_camera_frames_fresh(now, now - 100_000_000, now - 250_000_000)
+  assert not ccnc_camera_frames_fresh(now, 0, now - 100_000_000)
+  assert not ccnc_camera_frames_fresh(now, now - 100_000_000, 0)
+  assert not ccnc_camera_frames_fresh(now, now - 301_000_000, now - 100_000_000)
+  assert not ccnc_camera_frames_fresh(now, now - 100_000_000, now - 301_000_000)
+  assert not ccnc_camera_frames_fresh(now, now + 1, now - 100_000_000)

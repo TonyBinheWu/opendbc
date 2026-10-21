@@ -9,6 +9,14 @@ from opendbc.sunnypilot.car.hyundai.lead_data_ext import CanFdLeadData
 # synchronized camera/cluster logs are independently validated.
 # A DBC definition or successful CAN transmission is NOT validation.
 CCNC_VERIFIED_CLUSTER_PLATFORMS = frozenset()
+CCNC_CLUSTER_SOURCE_TIMEOUT_NS = 300_000_000
+
+
+def ccnc_camera_frames_fresh(now_nanos: int, timestamp_161: int, timestamp_162: int) -> bool:
+  """Require both valid OEM CAN parser messages to have arrived recently."""
+  return (timestamp_161 > 0 and timestamp_162 > 0 and
+          0 <= now_nanos - timestamp_161 <= CCNC_CLUSTER_SOURCE_TIMEOUT_NS and
+          0 <= now_nanos - timestamp_162 <= CCNC_CLUSTER_SOURCE_TIMEOUT_NS)
 
 
 class CanBus(CanBusBase):
