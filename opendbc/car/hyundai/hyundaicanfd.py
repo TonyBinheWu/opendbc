@@ -127,101 +127,43 @@ def create_lfahda_cluster(packer, CAN, enabled, lfa_icon):
 
 
 def create_ccnc(packer, CAN, openpilot_longitudinal_control, enabled, hud, left_blinker, right_blinker, msg_161, msg_162, msg_1b5,
-                is_metric, out, main_cruise_enabled, lfa_icon):
-  for f in {"FAULT_LSS", "FAULT_HDA", "FAULT_DAS", "FAULT_LFA", "FAULT_DAW", "FAULT_ESS"}:
-    msg_162[f] = 0
-  if msg_161["ALERTS_2"] == 5:
-    msg_161.update({"ALERTS_2": 0, "SOUNDS_2": 0})
-  if msg_161["ALERTS_3"] == 17:
-    msg_161["ALERTS_3"] = 0
-  if msg_161["ALERTS_5"] in (2, 5):
-    msg_161["ALERTS_5"] = 0
-  if msg_161["SOUNDS_4"] == 2 and msg_161["LFA_ICON"] in (0, 3):
-    msg_161["SOUNDS_4"] = 0
+                is_metric, out, main_cruise_enabled, lfa_icon, display_options=None, protocol_verified=False):
+  """Forward OEM ccNC instrument data without fabricating faults or targets.
 
-  LANE_CHANGE_SPEED_MIN = 8.9408  # 20 mph
-  any_blinker = left_blinker or right_blinker
-  curvature = {i: (31 if i == -1 else 13 - abs(i + 15)) if i < 0 else 15 + i for i in range(-15, 16)}
+  Off/default: repack the last source camera messages unchanged. Additional
+  sunnypilot overlays require an independently verified platform protocol and
+  an explicit offroad opt-in. Unknown target classes, signs, NAV/HDP and warning
+  fields are never synthesized.
+  """
+  # Work on independent copies; the parser's original decoded source must not
+  # be modified, including when a later packet or feature is invalid.
+  values_161, values_162 = dict(msg_161), dict(msg_162)
+  options = display_options or {}
 
-  msg_161.update({
-    "DAW_ICON": 0,
-    "LKA_ICON": 0,
-    "LFA_ICON": 2 if lfa_icon else 0,
-    "CENTERLINE": 1 if lfa_icon else 0,
-    "LANELINE_CURVATURE": curvature[max(-15, min(int(out.steeringAngleDeg / 4.5), 15))] if lfa_icon and not any_blinker else 15,
-    "LANELINE_LEFT": (0 if not lfa_icon else 1 if not hud.leftLaneVisible else 4 if hud.leftLaneDepart else 6 if any_blinker else 2),
-    "LANELINE_RIGHT": (0 if not lfa_icon else 1 if not hud.rightLaneVisible else 4 if hud.rightLaneDepart else 6 if any_blinker else 2),
-    "LCA_LEFT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.leftBlindspot else 2 if any_blinker else 4),
-    "LCA_RIGHT_ICON": (0 if not lfa_icon or out.vEgo < LANE_CHANGE_SPEED_MIN else 1 if out.rightBlindspot else 2 if any_blinker else 4),
-    "LCA_LEFT_ARROW": 2 if left_blinker else 0,
-    "LCA_RIGHT_ARROW": 2 if right_blinker else 0,
-  })
+  if protocol_verified and options.get("master", False):
+    if options.get("assist", False):
+      # Only active sunnypilot LFA is mapped. We do not claim HDA/HDP or
+      # LCA availability based on a blinker or a blindspot Boolean.
+      if enabled and lfa_icon:
+        values_161["LFA_ICON"] = 2
 
-  if lfa_icon and any_blinker:
-    left_lane_raw, right_lane_raw = msg_1b5["Info_LftLnPosVal"], msg_1b5["Info_RtLnPosVal"]
+      if openpilot_longitudinal_control and enabled and main_cruise_enabled:
+        # The actual commanded cruise speed and following bar count are
+        # available from the active controller; no placeholder 255 or
+        # fabricated preceding-car symbols.
+        speed = round(out.vCruiseCluster * (1 if is_metric else CV.KPH_TO_MPH))
+        if 0 < speed <= (145 if is_metric else 90):
+          values_161["SETSPEED_SPEED"] = speed
+          values_161["DISTANCE"] = hud.leadDistanceBars
 
-    scale_per_m = 15 / 1.7
-    left_lane = abs(int(round(15 + (left_lane_raw - 1.7) * scale_per_m)))
-    right_lane = abs(int(round(15 + (right_lane_raw - 1.7) * scale_per_m)))
+    # Lane positions, LCA arrows, nearby traffic, and traffic signs are not
+    # rewritten until their semantics, provenance, timeout and calibration
+    # have been validated for the fingerprinted vehicle. Retain OEM values.
 
-    if msg_1b5["Info_LftLnQualSta"] not in (2, 3):
-      left_lane = 0
-    if msg_1b5["Info_RtLnQualSta"] not in (2, 3):
-      right_lane = 0
-
-    if left_lane_raw == -2.0248375:
-      left_lane = 30 - right_lane
-    if right_lane_raw == 2.0248375:
-      right_lane = 30 - left_lane
-
-    if left_lane_raw == right_lane_raw == 0:
-      left_lane = right_lane = 15
-    elif left_lane_raw == 0:
-      left_lane = 30 - right_lane
-    elif right_lane_raw == 0:
-      right_lane = 30 - left_lane
-
-    total = left_lane + right_lane
-    if total == 0:
-      left_lane = right_lane = 15
-    else:
-      left_lane = round((left_lane / total) * 30)
-      right_lane = 30 - left_lane
-
-    msg_161["LANELINE_LEFT_POSITION"] = left_lane
-    msg_161["LANELINE_RIGHT_POSITION"] = right_lane
-
-  if hud.leftLaneDepart or hud.rightLaneDepart:
-    msg_162["VIBRATE"] = 1
-
-  if openpilot_longitudinal_control:
-    if msg_161["ALERTS_3"] in (1, 2, 3, 4, 7, 8, 9, 10):
-      msg_161["ALERTS_3"] = 0
-    if msg_161["ALERTS_5"] == 4:
-      msg_161["ALERTS_5"] = 0
-    if msg_161["SOUNDS_3"] == 5:
-      msg_161["SOUNDS_3"] = 0
-
-    msg_161.update({
-      "SETSPEED": 3 if enabled else 1,
-      "SETSPEED_HUD": 0 if not main_cruise_enabled else 2 if enabled else 1,
-      "SETSPEED_SPEED": (
-        255 if not main_cruise_enabled else
-        (40 if is_metric else 25) if (s := round(out.vCruiseCluster * (1 if is_metric else CV.KPH_TO_MPH))) > (145 if is_metric else 90) else s
-      ),
-      "DISTANCE": hud.leadDistanceBars,
-      "DISTANCE_SPACING": 0 if not main_cruise_enabled else 1 if enabled else 3,
-      "DISTANCE_LEAD": 0 if not main_cruise_enabled else 2 if enabled and hud.leadVisible else 1 if hud.leadVisible else 0,
-      "DISTANCE_CAR": 0 if not main_cruise_enabled else 2 if enabled else 1,
-      "SLA_ICON": 0,
-      "NAV_ICON": 0,
-      "TARGET": 0,
-    })
-
-    msg_162["LEAD"] = 0 if not main_cruise_enabled else 2 if enabled else 1
-    msg_162["LEAD_DISTANCE"] = msg_1b5["Longitudinal_Distance"]
-
-  return [packer.make_can_msg(msg, CAN.ECAN, data) for msg, data in [("CCNC_0x161", msg_161), ("CCNC_0x162", msg_162)]]
+  # Both IDs are already permitted by the CCNC-specific Panda safety policy.
+  # Never create additional CAN IDs or send messages to a new bus.
+  return [packer.make_can_msg(name, CAN.ECAN, values)
+          for name, values in (("CCNC_0x161", values_161), ("CCNC_0x162", values_162))]
 
 
 def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_override, set_speed, hud_control,
