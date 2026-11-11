@@ -142,7 +142,14 @@ static void hyundai_canfd_rx_hook(const CANPacket_t *msg) {
   hyundai_common_reset_acc_main_on_mismatches();
 }
 
+#include "opendbc/safety/modes/hyundai_cluster.h"
+
 static bool hyundai_canfd_tx_hook(const CANPacket_t *msg) {
+  const HyundaiClusterFrame *cluster = hyundai_cluster_find(msg->addr);
+  if (hyundai_formosa_cluster && (msg->bus == 0U) && (cluster != NULL)) {
+    return hyundai_cluster_valid(msg, cluster);
+  }
+
   const struct lookup_t HYUNDAI_CANFD_MAX_TORQUE_LOOKUP = {
     {9., 13., 17.},
     {409., 409., 270.},
@@ -415,13 +422,15 @@ static safety_config hyundai_canfd_init(uint16_t param) {
     }
   }
 
-  return ret;
+  return hyundai_cluster_config(ret, param);
 }
 
 const safety_hooks hyundai_canfd_hooks = {
   .init = hyundai_canfd_init,
   .rx = hyundai_canfd_rx_hook,
   .tx = hyundai_canfd_tx_hook,
+  .tx_consumed = hyundai_cluster_consume,
+  .fwd_packet = hyundai_cluster_forward,
   .get_counter = hyundai_canfd_get_counter,
   .get_checksum = hyundai_canfd_get_checksum,
   .compute_checksum = hyundai_common_canfd_compute_checksum,

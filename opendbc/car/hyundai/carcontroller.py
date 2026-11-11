@@ -64,6 +64,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     LongitudinalController.__init__(self, CP, CP_SP)
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
     self.CAN = CanBus(CP)
+    from opendbc.car.hyundai.formosa_cluster import ClusterDisplay
+    self.formosa_cluster = ClusterDisplay()
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.angle_limit_counter = 0
@@ -220,7 +222,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT))
 
     # LFA and HDA icons
-    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
+    from opendbc.car.hyundai.formosa_cluster import DISPLAY_FLAG
+    if not self.CP.flags & DISPLAY_FLAG and self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
       can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
 
     # blinkers
@@ -259,5 +262,8 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
             for _ in range(20):
               can_sends.append(hyundaicanfd.create_buttons(self.packer, self.CP, self.CAN, CS.buttons_counter + 1, Buttons.RES_ACCEL))
             self.last_button_frame = self.frame
+
+    if self.CP.flags & DISPLAY_FLAG:
+      can_sends.extend(self.formosa_cluster.messages(CS.formosa_parser, self.CP, CC, CS, self.lfa_icon))
 
     return can_sends

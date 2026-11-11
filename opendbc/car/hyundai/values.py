@@ -65,6 +65,7 @@ class CarControllerParams:
 
 
 class HyundaiSafetyFlags(IntFlag):
+  FORMOSA_CLUSTER = 1 << 14
   EV_GAS = 1
   HYBRID_GAS = 2
   LONG = 4
@@ -100,6 +101,8 @@ class HyundaiSafetyFlags(IntFlag):
 #     request (0x7F2822 'conditions not correct') — longitudinal not available.
 
 class HyundaiFlags(IntFlag):
+  FORMOSA_CLUSTER = 1 << 30
+  FORMOSA_CLUSTER_AVAILABLE = 1 << 29
   # Dynamic Flags
 
   # Default assumption: all cars use LFA (ADAS) steering from the camera (HDA1).
