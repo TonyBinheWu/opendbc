@@ -220,6 +220,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
   def update_canfd(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
+    self.formosa_parser = cp_cam
 
     ret = structs.CarState()
     ret_sp = structs.CarStateSP()
@@ -327,10 +328,15 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
-    return {
+    parsers = {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).CAM),
     }
+
+    from opendbc.car.hyundai.formosa_cluster import DISPLAY_FLAG, MESSAGES
+    if CP.flags & DISPLAY_FLAG:
+      parsers[Bus.cam].track_raw_messages(MESSAGES.values())
+    return parsers
 
   def get_can_parsers(self, CP, CP_SP):
     if CP.flags & HyundaiFlags.CANFD:

@@ -136,6 +136,8 @@ class CANParser:
     self.ts_nanos: dict[int | str, dict[str, int]] = {}
     self.addresses: set[int] = set()
     self.message_states: dict[int, MessageState] = {}
+    self.raw_messages: dict[int, tuple[int, bytes]] = {}
+    self._raw_sizes: dict[int, int] = {}
 
     for name_or_addr, freq in messages:
       if isinstance(name_or_addr, numbers.Number):
@@ -152,6 +154,12 @@ class CANParser:
     self.can_invalid_cnt: int = CAN_INVALID_CNT
     self.last_nonempty_nanos: int = 0
     self._last_update_nanos: int = 0
+
+  def track_raw_messages(self, names):
+    # Explicit, bounded optional observers. They never add validity/frequency checks.
+    for name in names:
+      msg = self.dbc.name_to_msg[name]
+      self._raw_sizes[msg.address] = msg.size
 
   def _add_message(self, name_or_addr: str | int, freq: int | None = None) -> None:
     if isinstance(name_or_addr, numbers.Number):
@@ -230,6 +238,12 @@ class CANParser:
         if src != self.bus:
           continue
         bus_empty = False
+        if address in self._raw_sizes:
+          # Invalid lengths invalidate the observer rather than renewing old content.
+          if len(dat) == self._raw_sizes[address]:
+            self.raw_messages[address] = t, bytes(dat)
+          else:
+            self.raw_messages.pop(address, None)
         state = self.message_states.get(address)
         if state is None or len(dat) > 64:
           continue

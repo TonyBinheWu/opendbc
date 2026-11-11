@@ -287,6 +287,24 @@ int safety_fwd_hook(int bus_num, int addr) {
   return blocked ? -1 : destination_bus;
 }
 
+// Only called by the driver after normal TX validation. Consumed host display
+// updates are cached, never placed on a physical CAN TX queue.
+bool safety_tx_consumed_hook(const CANPacket_t *msg) {
+  return !relay_malfunction && tx_msg_safety_check(msg, current_safety_config.tx_msgs, current_safety_config.tx_msgs_len) &&
+         (current_hooks->tx_consumed != NULL) && current_hooks->tx_consumed(msg);
+}
+
+int safety_fwd_packet_hook(int bus_num, CANPacket_t *msg) {
+  if (bus_num != (int)msg->bus) {
+    return -1;
+  }
+  const int destination = safety_fwd_hook(bus_num, msg->addr);
+  if ((destination >= 0) && (current_hooks->fwd_packet != NULL)) {
+    current_hooks->fwd_packet(msg);
+  }
+  return destination;
+}
+
 // Given a CRC-8 poly, generate a static lookup table to use with a fast CRC-8
 // algorithm. Called at init time for safety modes using CRC-8.
 void gen_crc_lookup_table_8(uint8_t poly, uint8_t crc_lut[]) {

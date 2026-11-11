@@ -226,6 +226,8 @@ typedef struct {
   rx_hook rx;
   tx_hook tx;
   fwd_hook fwd;
+  bool (*tx_consumed)(const CANPacket_t *msg);
+  void (*fwd_packet)(CANPacket_t *msg);
   get_checksum_t get_checksum;
   compute_checksum_t compute_checksum;
   get_counter_t get_counter;
@@ -341,6 +343,8 @@ extern uint16_t current_safety_param_sp;
 extern safety_config current_safety_config;
 
 int safety_fwd_hook(int bus_num, int addr);
+bool safety_tx_consumed_hook(const CANPacket_t *msg);
+int safety_fwd_packet_hook(int bus_num, CANPacket_t *msg);
 int set_safety_hooks(uint16_t mode, uint16_t param);
 
 extern const safety_hooks body_hooks;

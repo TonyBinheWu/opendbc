@@ -40,6 +40,9 @@ class CarInterface(CarInterfaceBase):
       cam_can = CanBus(None, fingerprint).CAM
       lka_steering = 0x50 in fingerprint[cam_can] or 0x110 in fingerprint[cam_can]
       CAN = CanBus(None, fingerprint, lka_steering)
+      # Capability evidence only. This does not enable transmissions or change topology.
+      if isinstance(fingerprint[CAN.CAM], dict) and fingerprint[CAN.CAM].get(0x161) == 32 and fingerprint[CAN.CAM].get(0x162) == 32:
+        ret.flags |= HyundaiFlags.FORMOSA_CLUSTER_AVAILABLE.value
 
       ret.alphaLongitudinalAvailable = not (ret.flags & HyundaiFlags.CANFD_NO_RADAR_DISABLE)
       if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw]:
